@@ -8,21 +8,39 @@ import org.bukkit.NamespacedKey
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
-import org.bukkit.event.inventory.InventoryAction
 import org.bukkit.event.inventory.InventoryClickEvent
+import org.bukkit.event.inventory.InventoryCloseEvent
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack
 import org.bukkit.persistence.PersistentDataType
 
 open class MenuFramework(menuSize: Int, title: String) {
 
-    var menu : Inventory
+    private var menu : Inventory
+    private var closeAction : OnCloseListener? = null
 
     init {
         menu = Bukkit.createInventory(null,menuSize, text(title))
     }
 
+    companion object{
+        private val menuMap = HashMap<Player,MenuFramework>()
+
+        fun set(p:Player,menu:MenuFramework){
+            menuMap[p] = menu
+        }
+
+        fun get(p:Player):MenuFramework?{
+            return menuMap[p]
+        }
+
+        fun delete(p:Player){
+            menuMap.remove(p)
+        }
+    }
+
     fun open(p:Player){
+        set(p,this)
         p.openInventory(menu)
     }
 
@@ -38,10 +56,23 @@ open class MenuFramework(menuSize: Int, title: String) {
         }
     }
 
+    fun setCloseListener(action:OnCloseListener){
+        closeAction = action
+    }
+
+    fun close(e:InventoryCloseEvent){
+        delete(e.player as Player)
+        closeAction?.closeAction(e.player as Player,e)
+    }
+
+    fun interface OnCloseListener{
+        fun closeAction(p:Player,e: InventoryCloseEvent)
+    }
+
     class Button(icon:Material,val key:String){
 
         private var buttonItem : ItemStack
-        private var actionData : ClickAction? = null
+        private var actionData : OnClickListener? = null
 
         init {
             buttonItem = ItemStack(icon)
@@ -90,7 +121,7 @@ open class MenuFramework(menuSize: Int, title: String) {
 
         }
 
-        fun setClickAction(action: ClickAction):Button{
+        fun setClickAction(action: OnClickListener):Button{
             actionData = action
             set(this)
             return this
@@ -105,12 +136,12 @@ open class MenuFramework(menuSize: Int, title: String) {
             return buttonItem
         }
 
-        fun interface ClickAction{
+        fun interface OnClickListener{
             fun action(p:Player,e:InventoryClickEvent)
         }
     }
 
-    object ButtonListener:Listener{
+    object MenuListener:Listener{
 
         @EventHandler
         fun clickEvent(e:InventoryClickEvent){
@@ -120,6 +151,14 @@ open class MenuFramework(menuSize: Int, title: String) {
             val data = Button.get(item)?:return
             e.isCancelled = true
             data.click(e)
+        }
+
+        @EventHandler
+        fun closeEvent(e:InventoryCloseEvent){
+
+            if (e.player !is Player)return
+            val menu = get(e.player as Player)?:return
+            menu.close(e)
         }
 
     }

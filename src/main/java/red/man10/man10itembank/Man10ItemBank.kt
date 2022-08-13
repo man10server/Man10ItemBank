@@ -20,7 +20,7 @@ class Man10ItemBank : JavaPlugin() {
         getCommand("mib")!!.setExecutor(Command)
         getCommand("mibop")!!.setExecutor(Command)
 
-        server.pluginManager.registerEvents(MenuFramework.ButtonListener,this)
+        server.pluginManager.registerEvents(MenuFramework.MenuListener,this)
 
         MySQLManager.runAsyncMySQLQueue(this,"Man10ItemBank")
     }

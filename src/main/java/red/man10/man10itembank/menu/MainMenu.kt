@@ -32,6 +32,10 @@ object MainMenu : MenuFramework(36, "${Utility.prefix}§f§lアイテムバン�
 
         arrayOf(14,15,16,23,24,25).forEach { setButton(takeItemButton,it) }
 
+        setCloseListener{ p, e ->
+            sendMsg(p,"アイテムバンクを閉じた")
+        }
+
     }
 
 }
