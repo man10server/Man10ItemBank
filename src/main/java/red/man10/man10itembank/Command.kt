@@ -135,7 +135,7 @@ object Command : CommandExecutor {
                 }
             }
 
-            "get" ->{
+            "item" ->{
 
                 if (args.size != 2){
                     sendError(sender,"/mib get <id>")
