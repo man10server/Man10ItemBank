@@ -1,8 +1,10 @@
 package red.man10.man10itembank
 
+import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
 import red.man10.man10itembank.ItemData.CallBack
 import red.man10.man10itembank.ItemData.Transaction
+import red.man10.man10itembank.util.MySQLManager
 import red.man10.man10itembank.util.Utility
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -11,19 +13,68 @@ import java.util.concurrent.LinkedBlockingQueue
 object ItemData {
 
     private val transactionQueue  = LinkedBlockingQueue<Pair<Transaction,CallBack>>()
-    private var itemIndex = ConcurrentHashMap<Int,ItemStack>()
+    private var itemIndex = ConcurrentHashMap<Int,ItemIndex>()
 
-    fun getItemData(id:Int):ItemStack?{
+    private lateinit var mysql : MySQLManager
 
+    fun getItemData(id:Int):ItemIndex?{
         return itemIndex[id]
     }
 
-    fun asyncRegisterItem(id:Int,name:String,item:ItemStack){
-
-
-        asyncLoadItemIndex()
+    fun getItemData(name:String):ItemIndex?{
+        return itemIndex.filterValues { it.itemKey == name }[0]
     }
 
+    //ItemIndexに新規アイテムを登録 0:成功、1:重複、2:失敗
+    fun registerItem(player: Player,name:String,item:ItemStack,callBack: CallBack = CallBack {}){
+
+        val transaction = Transaction {
+
+            if (getItemData(name)!=null){
+                return@Transaction 1
+            }
+
+            mysql.execute("INSERT INTO item_index (item_key, item_name, price, bid, ask, tick, time, disabled, base64) VALUES ('key', 'name', 0, 0, 0, 0, DEFAULT, 0, '64');")
+            asyncLoadItemIndex()
+
+            if (getItemData(name)!=null){
+
+                //TODO:Logging
+
+                return@Transaction 0
+            }
+
+            return@Transaction 2
+        }
+
+        addTransaction(transaction,callBack)
+    }
+
+    //アイテム削除 0:成功、1:存在しない、2:失敗
+    fun unregisterItem(player: Player,id:Int,callBack: CallBack = CallBack {}){
+
+        val transaction = Transaction{
+
+            if (getItemData(id) == null){
+                return@Transaction 1
+            }
+
+            mysql.execute("DELETE FROM item_index WHERE id=${id};")
+            asyncLoadItemIndex()
+
+            if (getItemData(id) == null){
+                //TODO:Logging
+                return@Transaction 0
+            }
+
+            return@Transaction 2
+        }
+
+        addTransaction(transaction, callBack)
+
+    }
+
+    //返り値は在庫
     fun addItemAmount(uuid:UUID,id: Int,amount: Int,callBack: CallBack = CallBack {}){
 
         val transaction = Transaction {
@@ -40,7 +91,7 @@ object ItemData {
 
     }
 
-    //返り値は残量
+    //返り値は在庫
     fun takeItemAmount(uuid:UUID,id: Int,amount: Int,callBack: CallBack = CallBack {}){
 
         val transaction = Transaction {
@@ -85,7 +136,7 @@ object ItemData {
 
 /////////////////////////////////////////////////////////////////////////
 
-    private fun addTransaction(transaction:Transaction,callBack:CallBack){
+    private fun addTransaction(transaction:Transaction,callBack:CallBack= CallBack {}){
         transactionQueue.add(Pair(transaction,callBack))
     }
 
@@ -98,17 +149,42 @@ object ItemData {
         return 0
     }
 
-    private fun asyncLoadItemIndex():ConcurrentHashMap<Int,ItemStack>{
+    private fun asyncLoadItemIndex(){
 
         Utility.log("item indexの読み込み")
 
         itemIndex.clear()
 
-        val index = ConcurrentHashMap<Int,ItemStack>()
+        val index = ConcurrentHashMap<Int,ItemIndex>()
+
+        val rs = mysql.query("SELECT * FROM item_index where disabled=0;")?:return
+
+        while (rs.next()){
+
+            val data = ItemIndex()
+
+            data.id = rs.getInt("id")
+            data.itemKey = rs.getString("item_key")
+            data.itemName = rs.getString("item_name")
+            data.price = rs.getDouble("price")
+            data.bid = rs.getDouble("bid")
+            data.ask = rs.getDouble("ask")
+            data.tick = rs.getDouble("tick")
+
+            data.item = Utility.itemFromBase64(rs.getString("base64"))
+
+            if (data.item == null){
+                Utility.log("ID:${data.id},Name:${data.itemKey} アイテムデータの取得に失敗！")
+                continue
+            }
+
+            index[data.id] = data
+        }
+
+        rs.close()
+        mysql.close()
 
         itemIndex = index
-
-        return index
     }
 
 
@@ -120,6 +196,8 @@ object ItemData {
         Utility.log("トランザクションキュー起動")
 
         Thread{
+
+            mysql = MySQLManager(Man10ItemBank.plugin,"Man10ItemBankTransaction")
 
             try {
                 while (true){
@@ -139,9 +217,28 @@ object ItemData {
 
     }
 
+    class ItemIndex{
+
+        var id : Int = 0
+        var itemKey : String = ""
+        var itemName : String = ""
+        var price : Double = 0.0
+        var bid : Double = 0.0
+        var ask : Double = 0.0
+        var tick : Double = 0.0
+        var item : ItemStack? = null
+    }
+
     init {
         runTransactionQueue()
-        asyncLoadItemIndex()
+
+        val transaction = Transaction{
+            asyncLoadItemIndex()
+            return@Transaction 0
+        }
+
+        addTransaction(transaction)
+
     }
 
 }
