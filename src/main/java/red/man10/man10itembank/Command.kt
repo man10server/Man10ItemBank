@@ -6,32 +6,43 @@ import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
+import red.man10.man10itembank.util.Utility
 import red.man10.man10itembank.util.Utility.sendError
 import red.man10.man10itembank.util.Utility.sendMsg
 
 object Command : CommandExecutor {
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>?): Boolean {
 
-        if (label=="mib"){ mib(sender,args) }
+        if (label=="mib"){
+            if (sender !is Player)return false
+            if (!Utility.hasUserPermission(sender))return false
+
+
+        }
 
         if (label=="mibop"){ mibop(sender, args) }
 
         return false
     }
 
-    fun mib(sender: CommandSender, args: Array<out String>?){
+
+    private fun mibop(sender: CommandSender, args: Array<out String>?){
+
+        if (sender is Player && !Utility.hasOPPermission(sender))return
+
         if (args.isNullOrEmpty()){
 
-            return
-        }
-
-        when(args[0]){
-
-        }
-    }
-
-    fun mibop(sender: CommandSender, args: Array<out String>?){
-        if (args.isNullOrEmpty()){
+            sendMsg(sender,"§d§lMan10ItemBank")
+            sendMsg(sender,"§d§l----------運営用コマンド----------")
+            sendMsg(sender,"§d§l/mibop register <識別名> <初期価格> <最低取引単位>   : 新アイテムを登録")
+            sendMsg(sender,"§d§l/mibop unregister <id>                          : アイテムを削除")
+            sendMsg(sender,"§d§l/mibop list                                     : 登録アイテム一覧 ")
+            sendMsg(sender,"§d§l/mibop item <id>                                : アイテムのコピーを取得 ")
+            sendMsg(sender,"§d§l----------指定プレイヤーのアイテムバンクを操作----------")
+            sendMsg(sender,"§d§l/mibop add <player> <id> <amount>")
+            sendMsg(sender,"§d§l/mibop take <player> <id> <amount>")
+            sendMsg(sender,"§d§l/mibop set <player> <id> <amount>")
+            sendMsg(sender,"§d§l/mibop show <player> <id>")
 
             return
         }
@@ -39,7 +50,6 @@ object Command : CommandExecutor {
         when(args[0]){
 
             "queue" ->{
-
                 sendMsg(sender,ItemData.getQueueSize().toString())
 
             }
@@ -138,7 +148,7 @@ object Command : CommandExecutor {
             "item" ->{
 
                 if (args.size != 2){
-                    sendError(sender,"/mib get <id>")
+                    sendError(sender,"/mib item <id>")
                     return
                 }
 
@@ -161,7 +171,7 @@ object Command : CommandExecutor {
                     return
                 }
 
-                sender.inventory.addItem(data.item!!)
+                sender.inventory.addItem(data.item!!.clone())
 
             }
 
@@ -266,10 +276,10 @@ object Command : CommandExecutor {
 
             }
 
-            "get" ->{
+            "show" ->{
 
                 if (args.size!=4){
-                    sendError(sender,"/mibop get <player> <id>")
+                    sendError(sender,"/mibop show <player> <id>")
                     return
                 }
 

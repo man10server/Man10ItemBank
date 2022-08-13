@@ -1,6 +1,7 @@
 package red.man10.man10itembank
 
 import org.bukkit.plugin.java.JavaPlugin
+import red.man10.man10itembank.menu.MenuFramework
 import red.man10.man10itembank.util.MySQLManager
 
 class Man10ItemBank : JavaPlugin() {
@@ -18,6 +19,8 @@ class Man10ItemBank : JavaPlugin() {
 
         getCommand("mib")!!.setExecutor(Command)
         getCommand("mibop")!!.setExecutor(Command)
+
+        server.pluginManager.registerEvents(MenuFramework.ButtonListener,this)
 
         MySQLManager.runAsyncMySQLQueue(this,"Man10ItemBank")
     }

@@ -77,6 +77,22 @@ object Utility {
         }
     }
 
+    fun hasUserPermission(p:Player):Boolean{
+        if (!p.hasPermission("market.user")){
+            sendError(p,"あなたには権限がありません！")
+            return false
+        }
+        return true
+    }
+
+    fun hasOPPermission(p:Player):Boolean{
+        if (!p.hasPermission("market.op")){
+            sendError(p,"あなたには権限がありません！")
+            return false
+        }
+        return true
+    }
+
     fun format(double: Double):String{
         return String.format("%,.0f",double)
     }
