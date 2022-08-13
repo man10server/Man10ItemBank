@@ -13,7 +13,7 @@ import java.io.ByteArrayOutputStream
 
 object Utility {
 
-    private const val prefix = "§4§l[§2§lMarket§4§l]§f§r"
+    const val prefix = "§4§l[§2§lMarket§4§l]§f§r"
 
     fun sendMsg(p:Player,text:String){
         p.sendMessage(prefix +text)

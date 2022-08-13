@@ -6,6 +6,7 @@ import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
+import red.man10.man10itembank.menu.MainMenu
 import red.man10.man10itembank.util.Utility
 import red.man10.man10itembank.util.Utility.sendError
 import red.man10.man10itembank.util.Utility.sendMsg
@@ -17,7 +18,7 @@ object Command : CommandExecutor {
             if (sender !is Player)return false
             if (!Utility.hasUserPermission(sender))return false
 
-
+            MainMenu.open(sender)
         }
 
         if (label=="mibop"){ mibop(sender, args) }

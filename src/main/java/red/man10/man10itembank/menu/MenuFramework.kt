@@ -31,6 +31,13 @@ open class MenuFramework(menuSize: Int, title: String) {
         menu.setItem(slot,button.icon())
     }
 
+    //背景として全埋めする
+    fun fill(button:Button){
+        for (i in 0 until menu.size){
+            setButton(button,i)
+        }
+    }
+
     class Button(icon:Material,val key:String){
 
         private var buttonItem : ItemStack
@@ -83,7 +90,7 @@ open class MenuFramework(menuSize: Int, title: String) {
 
         }
 
-        fun setClickAction(action:ClickAction):Button{
+        fun setClickAction(action: ClickAction):Button{
             actionData = action
             set(this)
             return this
@@ -91,7 +98,7 @@ open class MenuFramework(menuSize: Int, title: String) {
 
         fun click(e:InventoryClickEvent){
             if (actionData == null)return
-            actionData!!.action(e)
+            actionData!!.action(e.whoClicked as Player,e)
         }
 
         fun icon():ItemStack{
@@ -99,7 +106,7 @@ open class MenuFramework(menuSize: Int, title: String) {
         }
 
         fun interface ClickAction{
-            fun action(e:InventoryClickEvent)
+            fun action(p:Player,e:InventoryClickEvent)
         }
     }
 
@@ -108,6 +115,7 @@ open class MenuFramework(menuSize: Int, title: String) {
         @EventHandler
         fun clickEvent(e:InventoryClickEvent){
 
+            if (e.whoClicked !is Player)return
             val item = e.currentItem?:return
             val data = Button.get(item)?:return
             e.isCancelled = true
