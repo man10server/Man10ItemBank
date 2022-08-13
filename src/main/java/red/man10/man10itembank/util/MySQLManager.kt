@@ -17,7 +17,7 @@ import java.util.logging.Level
 
 class MySQLManager(private val plugin: JavaPlugin, private val conName: String) {
 
-    var debugMode: Boolean? = false
+    var debugMode: Boolean? = true
     private var HOST: String? = null
     private var DB: String? = null
     private var USER: String? = null

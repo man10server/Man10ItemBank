@@ -14,6 +14,8 @@ class Man10ItemBank : JavaPlugin() {
 
         plugin = this
 
+        saveDefaultConfig()
+
         getCommand("mib")!!.setExecutor(Command)
         getCommand("mibop")!!.setExecutor(Command)
 

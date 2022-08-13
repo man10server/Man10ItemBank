@@ -21,12 +21,29 @@ object ItemData {
 
     private lateinit var mysql : MySQLManager
 
+    //キューが詰まった時に確認するためのもの
+    fun getQueueSize():Int{
+        return transactionQueue.size
+    }
+
     fun getItemData(id:Int):ItemIndex?{
         return itemIndex[id]
     }
 
     fun getItemData(key:String):ItemIndex?{
-        return itemIndex.filterValues { it.itemKey == key }[0]
+
+        var data : ItemIndex? = null
+
+        itemIndex.forEach{
+            if (it.value.itemKey==key){
+                data = it.value
+            }
+        }
+        return data
+    }
+
+    fun getItemIndexMap():Map<Int,ItemIndex>{
+        return itemIndex
     }
 
     //ItemIndexに新規アイテムを登録 0:成功、1:重複、2:失敗
@@ -166,15 +183,19 @@ object ItemData {
     //在庫を設定
     private fun asyncSetItemAmount(uuid: UUID,id: Int,amount:Int):Int{
 
+        log("asyncSetItemAmount")
+
         getItemData(id) ?: return -1
 
-        mysql.execute("UPDATE item_storage SET amount = $amount WHERE uuid='${uuid}' and id=${id};")
+        mysql.execute("UPDATE item_storage SET amount = $amount WHERE uuid='${uuid}' and item_id=${id};")
 
         return 0
     }
 
     //在庫を取得
     private fun asyncGetItemAmount(uuid: UUID,id: Int):Int{
+
+        log("asyncGetItemAmount")
 
         getItemData(id) ?: return -1
 
