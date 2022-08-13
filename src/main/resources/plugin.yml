@@ -1,4 +1,10 @@
 name: Man10ItemBank
-version: '${version}'
+version: '1.0'
 main: red.man10.man10itembank.Man10ItemBank
 api-version: 1.17
+
+commands:
+  mib:
+    default: op
+  mibop:
+    default: op

@@ -7,12 +7,13 @@ import org.bukkit.inventory.ItemStack
 import org.bukkit.util.io.BukkitObjectInputStream
 import org.bukkit.util.io.BukkitObjectOutputStream
 import org.yaml.snakeyaml.external.biz.base64Coder.Base64Coder
+import red.man10.man10itembank.Log
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 
 object Utility {
 
-    private const val prefix = ""
+    private const val prefix = "§4§l[§2§lMarket§4§l]§f§r"
 
     fun sendMsg(p:Player,text:String){
         p.sendMessage(prefix +text)
@@ -22,8 +23,17 @@ object Utility {
         sender.sendMessage(prefix +text)
     }
 
-    fun log(text: String){
+    fun sendError(p:Player,text: String){
+        p.sendMessage("${prefix}§c§l${text}")
+    }
+
+    fun sendError(sender:CommandSender, text: String){
+        sender.sendMessage("${prefix}§c§l${text}")
+    }
+
+    fun log(text: String,player: Player? = null){
         Bukkit.getLogger().info(prefix +text)
+        Log.systemLog(player?.uniqueId,text)
     }
 
     ///////////////////////////////

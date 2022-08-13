@@ -15,6 +15,7 @@ class Man10ItemBank : JavaPlugin() {
         plugin = this
 
         getCommand("mib")!!.setExecutor(Command)
+        getCommand("mibop")!!.setExecutor(Command)
 
         MySQLManager.runAsyncMySQLQueue(this,"Man10ItemBank")
     }

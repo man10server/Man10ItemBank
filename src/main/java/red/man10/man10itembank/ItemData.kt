@@ -1,11 +1,15 @@
 package red.man10.man10itembank
 
+import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
 import red.man10.man10itembank.ItemData.CallBack
 import red.man10.man10itembank.ItemData.Transaction
 import red.man10.man10itembank.util.MySQLManager
+import red.man10.man10itembank.util.MySQLManager.Companion.escapeStringForMySQL
 import red.man10.man10itembank.util.Utility
+import red.man10.man10itembank.util.Utility.itemToBase64
+import red.man10.man10itembank.util.Utility.log
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
@@ -21,26 +25,26 @@ object ItemData {
         return itemIndex[id]
     }
 
-    fun getItemData(name:String):ItemIndex?{
-        return itemIndex.filterValues { it.itemKey == name }[0]
+    fun getItemData(key:String):ItemIndex?{
+        return itemIndex.filterValues { it.itemKey == key }[0]
     }
 
     //ItemIndexに新規アイテムを登録 0:成功、1:重複、2:失敗
-    fun registerItem(player: Player,name:String,item:ItemStack,callBack: CallBack = CallBack {}){
+    fun registerItem(player: Player, key:String, item:ItemStack,initialPrice:Double,tick:Double,callBack: CallBack = CallBack {}){
 
         val transaction = Transaction {
 
-            if (getItemData(name)!=null){
+            if (getItemData(key)!=null){
                 return@Transaction 1
             }
 
-            mysql.execute("INSERT INTO item_index (item_key, item_name, price, bid, ask, tick, time, disabled, base64) VALUES ('key', 'name', 0, 0, 0, 0, DEFAULT, 0, '64');")
+            mysql.execute("INSERT INTO item_index (item_key, item_name, price, bid, ask, tick, time, disabled, base64) " +
+                    "VALUES ('${escapeStringForMySQL(key)}', '${escapeStringForMySQL(item.i18NDisplayName?:"")}', ${initialPrice}, ${initialPrice}, ${initialPrice}, ${tick}, DEFAULT, 0, '${itemToBase64(item)}');")
+
             asyncLoadItemIndex()
 
-            if (getItemData(name)!=null){
-
-                //TODO:Logging
-
+            if (getItemData(key)!=null){
+                log("アイテムインデックス登録 item_key:${key}",player)
                 return@Transaction 0
             }
 
@@ -55,15 +59,14 @@ object ItemData {
 
         val transaction = Transaction{
 
-            if (getItemData(id) == null){
-                return@Transaction 1
-            }
+            val data = getItemData(id)?:return@Transaction 1
+            val key = data.itemKey
 
             mysql.execute("DELETE FROM item_index WHERE id=${id};")
             asyncLoadItemIndex()
 
             if (getItemData(id) == null){
-                //TODO:Logging
+                log("アイテムインデックス削除 item_key:${key}",player)
                 return@Transaction 0
             }
 
@@ -74,15 +77,20 @@ object ItemData {
 
     }
 
-    //返り値は在庫
-    fun addItemAmount(uuid:UUID,id: Int,amount: Int,callBack: CallBack = CallBack {}){
+    //返り値は在庫 -1は失敗or存在しないID
+    fun addItemAmount(order:UUID?,target:UUID, id: Int, amount: Int, callBack: CallBack = CallBack {}){
 
         val transaction = Transaction {
-            val nowAmount = asyncGetItemAmount(uuid, id)
+            val nowAmount = asyncGetItemAmount(target, id)
+
+            if (nowAmount == -1){
+                return@Transaction -1
+            }
 
             val newAmount = nowAmount+amount
 
-            asyncSetItemAmount(uuid, id, newAmount)
+            asyncSetItemAmount(target, id, newAmount)
+            Log.storageLog(order,target,id,nowAmount,"AddItem")
 
             return@Transaction newAmount
         }
@@ -92,16 +100,20 @@ object ItemData {
     }
 
     //返り値は在庫
-    fun takeItemAmount(uuid:UUID,id: Int,amount: Int,callBack: CallBack = CallBack {}){
+    fun takeItemAmount(order: UUID?, target:UUID, id: Int, amount: Int, callBack: CallBack = CallBack {}){
 
         val transaction = Transaction {
-            val nowAmount = asyncGetItemAmount(uuid, id)
+            val nowAmount = asyncGetItemAmount(target, id)
+
+            if (nowAmount == -1){
+                return@Transaction -1
+            }
 
             var newAmount = nowAmount-amount
 
             if (newAmount < 0){ newAmount = 0}
-
-            asyncSetItemAmount(uuid, id, newAmount)
+            asyncSetItemAmount(target, id, newAmount)
+            Log.storageLog(order,target,id,nowAmount,"TakeItem")
 
             return@Transaction newAmount
         }
@@ -110,16 +122,26 @@ object ItemData {
 
     }
 
-    //アイテム数を設定する
-    fun setItemAmount(uuid:UUID,id: Int,amount: Int,callBack: CallBack = CallBack {}){
+    //アイテム数を設定する 返り値は最新の在庫
+    fun setItemAmount(order: UUID?,target:UUID, id: Int, amount: Int, callBack: CallBack = CallBack {}){
 
         var newAmount = amount
 
         if (amount <0){ newAmount = 0 }
 
         val transaction = Transaction {
-            asyncSetItemAmount(uuid, id, newAmount)
-            return@Transaction 0
+
+            //倉庫の有無をチェック
+            val nowAmount = asyncGetItemAmount(target, id)
+
+            if (nowAmount == -1){
+                return@Transaction -1
+            }
+
+            asyncSetItemAmount(target, id, newAmount)
+            Log.storageLog(order,target,id,amount,"SetItem")
+
+            return@Transaction amount
         }
 
         addTransaction(transaction,callBack)
@@ -134,24 +156,64 @@ object ItemData {
         addTransaction(transaction, callBack)
     }
 
-/////////////////////////////////////////////////////////////////////////
+/////////////////////////////////キューの中で、キューに突っ込む処理を入れないこと(キューが詰まるため)////////////////////////////////////////
 
+    //同時に実行されてほしくない処理は、ここに処理を投げる
     private fun addTransaction(transaction:Transaction,callBack:CallBack= CallBack {}){
         transactionQueue.add(Pair(transaction,callBack))
     }
 
-    private fun asyncSetItemAmount(uuid: UUID,id: Int,amount:Int){
+    //在庫を設定
+    private fun asyncSetItemAmount(uuid: UUID,id: Int,amount:Int):Int{
 
-    }
+        getItemData(id) ?: return -1
 
-    private fun asyncGetItemAmount(uuid: UUID,id: Int):Int{
+        mysql.execute("UPDATE item_storage SET amount = $amount WHERE uuid='${uuid}' and id=${id};")
 
         return 0
     }
 
+    //在庫を取得
+    private fun asyncGetItemAmount(uuid: UUID,id: Int):Int{
+
+        getItemData(id) ?: return -1
+
+        val rs = mysql.query("select amount from item_storage where uuid='${uuid}' and item_id=${id};")?:return -1
+
+        if (!rs.next()){
+            asyncCreateItemStorage(uuid,id)
+        }
+
+        val amount = rs.getInt("amount")
+
+        rs.close()
+        mysql.close()
+
+        return amount
+    }
+
+    //アイテムバンクを作成 0:成功 2:失敗
+    private fun asyncCreateItemStorage(uuid: UUID,id:Int):Int{
+
+        val data = getItemData(id) ?: return 2
+
+        val p = Bukkit.getOfflinePlayer(uuid)
+
+        mysql.execute("INSERT INTO item_storage (player, uuid, item_id, item_key, amount, time) " +
+                "VALUES ('${p.name}', '${uuid}', ${id}, '${data.itemKey}', DEFAULT, DEFAULT);")
+
+        if (asyncGetItemAmount(uuid,id) != -1) {
+            Log.storageLog(uuid,uuid,id,0,"CreateStorage")
+            return 0
+        }
+
+        return 2
+    }
+
+    //ItemIndexの読み込み
     private fun asyncLoadItemIndex(){
 
-        Utility.log("item indexの読み込み")
+        log("ItemIndexの読み込み")
 
         itemIndex.clear()
 
@@ -165,7 +227,6 @@ object ItemData {
 
             data.id = rs.getInt("id")
             data.itemKey = rs.getString("item_key")
-            data.itemName = rs.getString("item_name")
             data.price = rs.getDouble("price")
             data.bid = rs.getDouble("bid")
             data.ask = rs.getDouble("ask")
@@ -174,7 +235,7 @@ object ItemData {
             data.item = Utility.itemFromBase64(rs.getString("base64"))
 
             if (data.item == null){
-                Utility.log("ID:${data.id},Name:${data.itemKey} アイテムデータの取得に失敗！")
+                log("ID:${data.id},Name:${data.itemKey} アイテムデータの取得に失敗！")
                 continue
             }
 
@@ -193,7 +254,7 @@ object ItemData {
 
     private fun runTransactionQueue(){
 
-        Utility.log("トランザクションキュー起動")
+        log("トランザクションキュー起動")
 
         Thread{
 
@@ -211,7 +272,7 @@ object ItemData {
                 }
 
             }catch (e:Exception){
-                Utility.log("トランザクションのエラー:${e.message}")
+                log("トランザクションキューのエラー:${e.message}")
             }
         }.start()
 
@@ -220,8 +281,7 @@ object ItemData {
     class ItemIndex{
 
         var id : Int = 0
-        var itemKey : String = ""
-        var itemName : String = ""
+        var itemKey : String = ""//識別名
         var price : Double = 0.0
         var bid : Double = 0.0
         var ask : Double = 0.0
