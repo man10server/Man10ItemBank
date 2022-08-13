@@ -18,7 +18,7 @@ object Command : CommandExecutor {
             if (sender !is Player)return false
             if (!Utility.hasUserPermission(sender))return false
 
-            MainMenu.open(sender)
+            MainMenu(sender).open()
         }
 
         if (label=="mibop"){ mibop(sender, args) }

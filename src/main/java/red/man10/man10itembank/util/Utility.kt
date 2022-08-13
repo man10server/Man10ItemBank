@@ -13,7 +13,7 @@ import java.io.ByteArrayOutputStream
 
 object Utility {
 
-    const val prefix = "§4§l[§2§lMarket§4§l]§f§r"
+    const val prefix = "§4§l[§2§lMarket§4§l]§e§lα§f§r"
 
     fun sendMsg(p:Player,text:String){
         p.sendMessage(prefix +text)
@@ -96,4 +96,9 @@ object Utility {
     fun format(double: Double):String{
         return String.format("%,.0f",double)
     }
+
+    fun format(int: Int):String{
+        return String.format("%,d",int)
+    }
+
 }

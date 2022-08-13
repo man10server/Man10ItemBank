@@ -23,6 +23,7 @@ class Man10ItemBank : JavaPlugin() {
         server.pluginManager.registerEvents(MenuFramework.MenuListener,this)
 
         MySQLManager.runAsyncMySQLQueue(this,"Man10ItemBank")
+        ItemData.getQueueSize()
     }
 
     override fun onDisable() {

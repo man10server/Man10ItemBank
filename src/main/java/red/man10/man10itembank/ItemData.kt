@@ -30,6 +30,20 @@ object ItemData {
         return itemIndex[id]
     }
 
+    //ItemStackからItemIndex取得
+    fun getItemData(item: ItemStack):ItemIndex?{
+
+        var data : ItemIndex? = null
+
+        itemIndex.forEach{
+            if (item.isSimilar(it.value.item)){
+                data = it.value
+            }
+        }
+        return data
+    }
+
+    //KeyからItemIndex取得
     fun getItemData(key:String):ItemIndex?{
 
         var data : ItemIndex? = null
@@ -116,7 +130,7 @@ object ItemData {
 
     }
 
-    //返り値は在庫
+    //返り値は在庫(取り出せなかった場合は-2)
     fun takeItemAmount(order: UUID?, target:UUID, id: Int, amount: Int, callBack: CallBack = CallBack {}){
 
         val transaction = Transaction {
@@ -126,9 +140,12 @@ object ItemData {
                 return@Transaction -1
             }
 
-            var newAmount = nowAmount-amount
+            val newAmount = nowAmount-amount
 
-            if (newAmount < 0){ newAmount = 0}
+            //取り出し失敗
+            if (newAmount < 0){
+                return@Transaction -2
+            }
             asyncSetItemAmount(target, id, newAmount)
             Log.storageLog(order,target,id,nowAmount,"TakeItem")
 

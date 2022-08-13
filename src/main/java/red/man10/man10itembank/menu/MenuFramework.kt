@@ -5,22 +5,26 @@ import net.kyori.adventure.text.Component.text
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
+import org.bukkit.enchantments.Enchantment
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.inventory.InventoryClickEvent
 import org.bukkit.event.inventory.InventoryCloseEvent
 import org.bukkit.inventory.Inventory
+import org.bukkit.inventory.ItemFlag
 import org.bukkit.inventory.ItemStack
 import org.bukkit.persistence.PersistentDataType
+import red.man10.man10itembank.util.Utility.prefix
+import java.util.concurrent.ConcurrentHashMap
 
-open class MenuFramework(menuSize: Int, title: String) {
+open class MenuFramework(val p:Player,menuSize: Int, title: String) {
 
-    private var menu : Inventory
+    var menu : Inventory
     private var closeAction : OnCloseListener? = null
 
     init {
-        menu = Bukkit.createInventory(null,menuSize, text(title))
+        menu = Bukkit.createInventory(null,menuSize, text(prefix+title))
     }
 
     companion object{
@@ -39,7 +43,8 @@ open class MenuFramework(menuSize: Int, title: String) {
         }
     }
 
-    fun open(p:Player){
+    fun open(){
+        p.closeInventory()
         set(p,this)
         p.openInventory(menu)
     }
@@ -127,9 +132,19 @@ open class MenuFramework(menuSize: Int, title: String) {
             return this
         }
 
+        fun setEnchant(): Button {
+            val meta = buttonItem.itemMeta
+            meta.addEnchant(Enchantment.LUCK,1,false)
+            meta.addItemFlags(ItemFlag.HIDE_ENCHANTS)
+            buttonItem.itemMeta = meta
+            set(this)
+            return this
+        }
+
+
         fun click(e:InventoryClickEvent){
             if (actionData == null)return
-            actionData!!.action(e.whoClicked as Player,e)
+            actionData!!.action(e)
         }
 
         fun icon():ItemStack{
@@ -137,7 +152,7 @@ open class MenuFramework(menuSize: Int, title: String) {
         }
 
         fun interface OnClickListener{
-            fun action(p:Player,e:InventoryClickEvent)
+            fun action(e:InventoryClickEvent)
         }
     }
 
