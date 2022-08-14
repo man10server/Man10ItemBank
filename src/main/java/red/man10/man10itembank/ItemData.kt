@@ -218,8 +218,10 @@ object ItemData {
 
         val rs = mysql.query("select amount from item_storage where uuid='${uuid}' and item_id=${id};")?:return -1
 
+        //倉庫が存在しなかった場合
         if (!rs.next()){
             asyncCreateItemStorage(uuid,id)
+            return asyncGetItemAmount(uuid, id)
         }
 
         val amount = rs.getInt("amount")
@@ -298,20 +300,21 @@ object ItemData {
 
             mysql = MySQLManager(Man10ItemBank.plugin,"Man10ItemBankTransaction")
 
-            try {
-                while (true){
+            while (true){
 
+                try {
                     val queue = transactionQueue.take()
 
                     val result = queue.first.onTransactionResult()
 
                     queue.second.callBack(result)
 
-                }
+                }catch (e:Exception){
+                    log("トランザクションキューのエラー:${e.stackTrace}")
 
-            }catch (e:Exception){
-                log("トランザクションキューのエラー:${e.message}")
+                }
             }
+
         }.start()
 
     }
