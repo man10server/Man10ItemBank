@@ -15,12 +15,11 @@ class PutMenu(p:Player) : MenuFramework(p,54,"アイテムを保存する"){
 
         putButton.setClickAction{e ->
             putItemToItemStorage(p,e.inventory)
-            sendMsg(p,"保存した")
         }
 
         arrayOf(45,46,47,48,49,50,51,52,53).forEach { setButton(putButton,it) }
 
-        setCloseListener{p,e->
+        setCloseListener{e->
             putItemToItemStorage(p,e.inventory)
         }
     }

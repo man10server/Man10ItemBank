@@ -16,7 +16,6 @@ import org.bukkit.inventory.ItemFlag
 import org.bukkit.inventory.ItemStack
 import org.bukkit.persistence.PersistentDataType
 import red.man10.man10itembank.util.Utility.prefix
-import java.util.concurrent.ConcurrentHashMap
 
 open class MenuFramework(val p:Player,menuSize: Int, title: String) {
 
@@ -67,11 +66,11 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
 
     fun close(e:InventoryCloseEvent){
         delete(e.player as Player)
-        closeAction?.closeAction(e.player as Player,e)
+        closeAction?.closeAction(e)
     }
 
     fun interface OnCloseListener{
-        fun closeAction(p:Player,e: InventoryCloseEvent)
+        fun closeAction(e: InventoryCloseEvent)
     }
 
     class Button(icon:Material,val key:String):Cloneable{

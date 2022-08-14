@@ -33,3 +33,35 @@ create table item_storage
 create index item_storage_uuid_item_id_index
 	on item_storage (uuid, item_id);
 
+create table storage_log
+(
+	id int auto_increment,
+	item_id int not null,
+	item_key varchar(128) null,
+	order_player varchar(16) null comment '倉庫を編集したプレイヤー(nullはコンソール)',
+	order_uuid varchar(36) null,
+	target_player varchar(16) not null,
+	target_uuid varchar(36) null,
+	action varchar(64) null,
+	edit_amount int null comment '操作をした量',
+	storage_amount int null comment '編集後の倉庫の量',
+	world varchar(16) null,
+	x double null,
+	y double null,
+	z double null,
+	time datetime default now() null,
+	constraint storage_log_pk
+		primary key (id)
+);
+
+create table system_log
+(
+	id int auto_increment,
+	player varchar(16) null,
+	uuid varchar(36) null,
+	action varchar(128) null,
+	time datetime default now() null,
+	constraint system_log_pk
+		primary key (id)
+);
+

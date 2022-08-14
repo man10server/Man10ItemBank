@@ -103,7 +103,7 @@ class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出
 
             if (p.inventory.firstEmpty()==-1){
                 Utility.sendError(p,"インベントリがいっぱいなので取り出すことができません")
-                Log.storageLog(p.uniqueId,p.uniqueId,id,amount,"FailedTakingItem(FullOfInventory)")
+                Log.storageLog(p.uniqueId,p.uniqueId,id,0,0,"FailedTakingItem(FullOfInventory)")
                 ItemData.addItemAmount(p.uniqueId,p.uniqueId,id,amount)
                 return@takeItemAmount
             }

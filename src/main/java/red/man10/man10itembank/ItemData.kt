@@ -121,7 +121,8 @@ object ItemData {
             val newAmount = nowAmount+amount
 
             asyncSetItemAmount(target, id, newAmount)
-            Log.storageLog(order,target,id,nowAmount,"AddItem")
+
+            Log.storageLog(order,target,id,amount,newAmount,"AddItem")
 
             return@Transaction newAmount
         }
@@ -147,7 +148,7 @@ object ItemData {
                 return@Transaction -2
             }
             asyncSetItemAmount(target, id, newAmount)
-            Log.storageLog(order,target,id,nowAmount,"TakeItem")
+            Log.storageLog(order,target,id,amount,newAmount,"TakeItem")
 
             return@Transaction newAmount
         }
@@ -173,7 +174,7 @@ object ItemData {
             }
 
             asyncSetItemAmount(target, id, newAmount)
-            Log.storageLog(order,target,id,amount,"SetItem")
+            Log.storageLog(order,target,id,amount,newAmount,"SetItem")
 
             return@Transaction amount
         }
@@ -200,19 +201,15 @@ object ItemData {
     //在庫を設定
     private fun asyncSetItemAmount(uuid: UUID,id: Int,amount:Int):Int{
 
-        log("asyncSetItemAmount")
-
         getItemData(id) ?: return -1
 
-        mysql.execute("UPDATE item_storage SET amount = $amount WHERE uuid='${uuid}' and item_id=${id};")
+        mysql.execute("UPDATE item_storage SET amount = $amount,time=now() WHERE uuid='${uuid}' and item_id=${id};")
 
         return 0
     }
 
     //在庫を取得
     private fun asyncGetItemAmount(uuid: UUID,id: Int):Int{
-
-        log("asyncGetItemAmount")
 
         getItemData(id) ?: return -1
 
@@ -243,7 +240,7 @@ object ItemData {
                 "VALUES ('${p.name}', '${uuid}', ${id}, '${data.itemKey}', DEFAULT, DEFAULT);")
 
         if (asyncGetItemAmount(uuid,id) != -1) {
-            Log.storageLog(uuid,uuid,id,0,"CreateStorage")
+            Log.storageLog(null,uuid,id,0,0,"CreateStorage")
             return 0
         }
 
