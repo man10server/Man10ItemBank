@@ -16,6 +16,8 @@ import org.bukkit.inventory.ItemFlag
 import org.bukkit.inventory.ItemStack
 import org.bukkit.persistence.PersistentDataType
 import red.man10.man10itembank.util.Utility.prefix
+import java.util.*
+import kotlin.collections.HashMap
 
 open class MenuFramework(val p:Player,menuSize: Int, title: String) {
 
@@ -79,10 +81,11 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
     }
 
 
-    class Button(icon:Material,val key:String):Cloneable{
+    class Button(icon:Material):Cloneable{
 
         private var buttonItem : ItemStack
         private var actionData : OnClickListener? = null
+        private val key = UUID.randomUUID().toString()
 
         init {
             buttonItem = ItemStack(icon)
@@ -188,7 +191,7 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
             if (menu?.clickAction != null){
                 menu.clickAction!!.action(e)
             }
-            
+
             val item = e.currentItem?:return
             val data = Button.get(item)?:return
             e.isCancelled = true

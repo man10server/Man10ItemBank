@@ -10,7 +10,7 @@ import red.man10.man10itembank.util.Utility.sendMsg
 class PutMenu(p:Player) : MenuFramework(p,54,"アイテムを保存する"){
 
     init {
-        val putButton = Button(Material.RED_STAINED_GLASS_PANE,"putItem")
+        val putButton = Button(Material.RED_STAINED_GLASS_PANE)
         putButton.displayName("§c§l保存")
 
         putButton.setClickAction{e ->
