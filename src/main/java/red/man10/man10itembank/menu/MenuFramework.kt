@@ -74,7 +74,7 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
         fun closeAction(p:Player,e: InventoryCloseEvent)
     }
 
-    class Button(icon:Material,val key:String){
+    class Button(icon:Material,val key:String):Cloneable{
 
         private var buttonItem : ItemStack
         private var actionData : OnClickListener? = null
@@ -132,8 +132,17 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
             return this
         }
 
-        fun setEnchant(): Button {
+        fun enchant(boolean: Boolean): Button {
+
             val meta = buttonItem.itemMeta
+
+            if (!boolean){
+                meta.enchants.forEach { meta.removeEnchant(it.key) }
+                buttonItem.itemMeta = meta
+                set(this)
+                return this
+            }
+
             meta.addEnchant(Enchantment.LUCK,1,false)
             meta.addItemFlags(ItemFlag.HIDE_ENCHANTS)
             buttonItem.itemMeta = meta
@@ -149,6 +158,10 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
 
         fun icon():ItemStack{
             return buttonItem
+        }
+
+        public override fun clone(): Button {
+            return super.clone() as Button
         }
 
         fun interface OnClickListener{
