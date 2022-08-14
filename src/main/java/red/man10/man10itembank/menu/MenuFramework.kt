@@ -114,9 +114,17 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
             }
         }
 
-        fun displayName(text:String):Button{
+        fun title(text:String):Button{
             val meta = buttonItem.itemMeta
             meta.displayName(text(text))
+            buttonItem.itemMeta = meta
+            set(this)
+            return this
+        }
+
+        fun cmd(int:Int):Button{
+            val meta = buttonItem.itemMeta
+            meta.setCustomModelData(int)
             buttonItem.itemMeta = meta
             set(this)
             return this

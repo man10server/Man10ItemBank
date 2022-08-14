@@ -28,7 +28,7 @@ class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出
 
             val data = itemIndex[index]
             val button = Button(data.item!!.type)
-            button.displayName("§b${data.itemKey}")
+            button.title("§b${data.itemKey}").cmd(data.item!!.itemMeta.customModelData)
 
             button.setClickAction{e,->
 
@@ -73,13 +73,13 @@ class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出
 
         //Back
         val back = Button(Material.LIGHT_BLUE_STAINED_GLASS_PANE)
-        back.displayName("")
+        back.title("")
         arrayOf(45,46,47,48,49,50,51,52,53).forEach { setButton(back,it) }
 
         //previous
         if (page!=0){
             val previous = Button(Material.RED_STAINED_GLASS_PANE)
-            previous.displayName("前のページへ")
+            previous.title("前のページへ")
             previous.setClickAction{ TakeMenu(p,page-1).open() }
             arrayOf(45,46,47).forEach { setButton(previous,it) }
 
@@ -88,7 +88,7 @@ class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出
         //next
         if (menu.getItem(44) != null){
             val next = Button(Material.RED_STAINED_GLASS_PANE)
-            next.displayName("次のページへ")
+            next.title("次のページへ")
             next.setClickAction{ TakeMenu(p,page+1).open() }
             arrayOf(51,52,53).forEach { setButton(next,it) }
         }
