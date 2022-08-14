@@ -28,7 +28,10 @@ class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出
 
             val data = itemIndex[index]
             val button = Button(data.item!!.type)
-            button.title("§b${data.itemKey}").cmd(data.item!!.itemMeta.customModelData)
+            button.title("§b${data.itemKey}")
+            if (data.item!!.hasItemMeta() && data.item!!.itemMeta.hasCustomModelData()){
+                button.cmd(data.item!!.itemMeta.customModelData)
+            }
 
             button.setClickAction{e,->
 
