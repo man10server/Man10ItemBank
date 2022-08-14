@@ -21,6 +21,7 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
 
     var menu : Inventory
     private var closeAction : OnCloseListener? = null
+    private var clickAction : Button.OnClickListener? = null
 
     init {
         menu = Bukkit.createInventory(null,menuSize, text(prefix+title))
@@ -64,6 +65,10 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
         closeAction = action
     }
 
+    fun setClickListener(action: Button.OnClickListener){
+        clickAction = action
+    }
+
     fun close(e:InventoryCloseEvent){
         delete(e.player as Player)
         closeAction?.closeAction(e)
@@ -72,6 +77,7 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
     fun interface OnCloseListener{
         fun closeAction(e: InventoryCloseEvent)
     }
+
 
     class Button(icon:Material,val key:String):Cloneable{
 
@@ -173,7 +179,16 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
         @EventHandler
         fun clickEvent(e:InventoryClickEvent){
 
-            if (e.whoClicked !is Player)return
+            val p = e.whoClicked
+
+            if (p !is Player)return
+
+            val menu = get(p)
+
+            if (menu?.clickAction != null){
+                menu.clickAction!!.action(e)
+            }
+            
             val item = e.currentItem?:return
             val data = Button.get(item)?:return
             e.isCancelled = true

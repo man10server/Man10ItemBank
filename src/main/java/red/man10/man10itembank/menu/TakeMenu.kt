@@ -13,6 +13,9 @@ class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出
 
     init {
 
+        //アイテムを入れられないように
+        setClickListener{ it.isCancelled = true }
+
         val itemIndex = ItemData.getItemIndexMap().values.toList()
 
         var inc = 0
