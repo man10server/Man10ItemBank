@@ -91,7 +91,6 @@ object Command : CommandExecutor {
                         ItemData.EnumResult.FAILED->{
                             sendError(sender,"失敗！同一識別名のアイテムが既に登録されている可能性があります！")
                         }
-
                     }
                 }
 
@@ -119,7 +118,7 @@ object Command : CommandExecutor {
                     when(it){
 
                         ItemData.EnumResult.SUCCESSFUL ->{
-                            sendMsg(sender,"削除成功！")
+                            sendMsg(sender,"削除成功")
                         }
                         ItemData.EnumResult.FAILED->{
                             sendError(sender,"削除失敗")

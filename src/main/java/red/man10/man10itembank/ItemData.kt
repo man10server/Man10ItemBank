@@ -42,13 +42,12 @@ object ItemData {
 
     //ItemStackからItemIndex取得
     fun getItemData(item: ItemStack):ItemIndex?{
-
-        return itemIndex.filter { it.value.item?.isSimilar(item)?:false }.getOrDefault(0, null)
+        return itemIndex.filter { it.value.item?.isSimilar(item)?:false }.values.firstOrNull()
     }
 
     //KeyからItemIndex取得
     fun getItemData(key: String): ItemIndex? {
-        return itemIndex.filter { it.value.itemKey == key }.getOrDefault(0, null)
+        return itemIndex.filter { it.value.itemKey == key }.values.firstOrNull()
     }
 
     fun getID(key: String):Int{
@@ -119,15 +118,10 @@ object ItemData {
     }
 
     //返り値は在庫 nullは失敗
-    fun addItemAmount(order:UUID?,target:UUID, id: Int, amount: Int, callBack : (Int?)->Unit = {}){
+    fun addItemAmount(order:UUID?,target:UUID, id: Int, amount: Int, callBack : (Int)->Unit = {}){
 
         val transaction = Transaction@ {
             val nowAmount = asyncGetItemAmount(target, id)
-
-            if (nowAmount == null){
-                callBack.invoke(null)
-                return@Transaction
-            }
 
             val newAmount = nowAmount+amount
 
@@ -143,22 +137,17 @@ object ItemData {
 
     }
 
-    //返り値は在庫(取り出せなかった場合は-1)
+    //返り値は在庫(取り出せなかった場合はnull)
     fun takeItemAmount(order: UUID?, target:UUID, id: Int, amount: Int, callBack: (Int?)->Unit =  {}){
 
         val transaction = Transaction@ {
             val nowAmount = asyncGetItemAmount(target, id)
 
-            if (nowAmount == null){
-                callBack.invoke(null)
-                return@Transaction
-            }
-
             val newAmount = nowAmount-amount
 
             //取り出し失敗
             if (newAmount < 0){
-                callBack.invoke(-1)
+                callBack.invoke(null)
                 return@Transaction
             }
             asyncSetItemAmount(target, id, newAmount)

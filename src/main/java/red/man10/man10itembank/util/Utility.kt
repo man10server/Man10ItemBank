@@ -32,7 +32,7 @@ object Utility {
     }
 
     fun log(text: String,player: Player? = null){
-        Bukkit.getLogger().info(prefix +text)
+//        Bukkit.getLogger().info(prefix +text)
         Log.systemLog(player?.uniqueId,text)
     }
 

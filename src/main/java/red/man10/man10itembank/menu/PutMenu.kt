@@ -43,11 +43,6 @@ class PutMenu(p:Player) : MenuFramework(p,54,"アイテムを保存する"){
         putData.forEach {
             ItemData.addItemAmount(p.uniqueId,p.uniqueId,it.key,it.value){ result ->
 
-                if (result==null){
-                    sendMsg(p,"追加失敗、アイテム名と個数を含めてレポートしてください")
-                    return@addItemAmount
-                }
-
                 val data = ItemData.getItemData(it.key)!!
                 sendMsg(p,"${data.itemKey}を${format(it.value)}個追加しました(現在の在庫:${format(result)}個)")
             }
