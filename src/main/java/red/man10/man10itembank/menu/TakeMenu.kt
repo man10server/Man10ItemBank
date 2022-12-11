@@ -102,7 +102,7 @@ class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出
     private fun takeItemFromItemStorage(p:Player, id:Int, amount:Int){
 
         ItemData.takeItemAmount(p.uniqueId,p.uniqueId,id,amount){
-            if (it==-2){
+            if (it==null){
                 Utility.sendError(p,"在庫ないので取り出すことができません")
                 return@takeItemAmount
             }

@@ -12,7 +12,7 @@ import red.man10.man10itembank.util.Utility.sendError
 import red.man10.man10itembank.util.Utility.sendMsg
 
 object Command : CommandExecutor {
-    override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>?): Boolean {
+    override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
 
         if (label=="mib"){
             if (sender !is Player)return false
@@ -85,15 +85,11 @@ object Command : CommandExecutor {
                 ItemData.registerItem(sender,key,item.asOne(),initialPrice, tick){
                     when(it){
 
-                        0 ->{
+                        ItemData.EnumResult.SUCCESSFUL ->{
                             sendMsg(sender,"登録成功！")
                         }
-                        1->{
-                            sendError(sender,"同一識別名のアイテムが既に存在します")
-                        }
-
-                        2->{
-                            sendError(sender,"登録失敗")
+                        ItemData.EnumResult.FAILED->{
+                            sendError(sender,"失敗！同一識別名のアイテムが既に登録されている可能性があります！")
                         }
 
                     }
@@ -122,14 +118,10 @@ object Command : CommandExecutor {
                 ItemData.unregisterItem(sender,id){
                     when(it){
 
-                        0 ->{
+                        ItemData.EnumResult.SUCCESSFUL ->{
                             sendMsg(sender,"削除成功！")
                         }
-                        1->{
-                            sendError(sender,"存在しないアイテムです")
-                        }
-
-                        2->{
+                        ItemData.EnumResult.FAILED->{
                             sendError(sender,"削除失敗")
                         }
 
