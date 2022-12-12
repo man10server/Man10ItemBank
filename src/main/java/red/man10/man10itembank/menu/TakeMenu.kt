@@ -50,8 +50,8 @@ class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出
 
                     button.lore(mutableListOf(
                         "§a所有数:§e${Utility.format(it)}",
-                        "§a単価:§e${Utility.format(data.price)}",
-                        "§a推定評価額:§e${Utility.format(data.price*it.toDouble())}"))
+                        "§a単価:§e${Utility.format(data.bid)}",
+                        "§a推定評価額:§e${Utility.format(data.bid*it.toDouble())}"))
 
                     Bukkit.getScheduler().runTask(Man10ItemBank.plugin, Runnable { setButton(button,e.slot) })
                 }
@@ -65,8 +65,8 @@ class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出
 
                 button.lore(mutableListOf(
                     "§a所有数:§e${Utility.format(it)}",
-                    "§a単価:§e${Utility.format(data.price)}",
-                    "§a推定評価額:§e${Utility.format(data.price*it.toDouble())}"))
+                    "§a単価:§e${Utility.format(data.bid)}",
+                    "§a推定評価額:§e${Utility.format(data.bid*it.toDouble())}"))
 
                 Bukkit.getScheduler().runTask(Man10ItemBank.plugin, Runnable {
                     menu.addItem(button.icon())

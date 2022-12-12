@@ -58,6 +58,21 @@ object ItemData {
         return itemIndex
     }
 
+    //価格更新
+    fun setItemPrice(item:String,bid:Double,ask:Double){
+
+        val data = getItemData(item)?:return
+        data.price = bid+ask/2
+        data.bid = bid
+        data.ask = ask
+
+        itemIndex[data.id] = data
+
+        addTransaction {
+            asyncSaveItemIndex(data)
+        }
+    }
+
     //ItemIndexに新規アイテムを登録
     fun registerItem(player: Player, key:String, item:ItemStack,initialPrice:Double,tick:Double,callBack: (EnumResult)->Unit = {}){
 
@@ -292,6 +307,9 @@ object ItemData {
         itemIndex = index
     }
 
+    private fun asyncSaveItemIndex(itemIndex: ItemIndex){
+        mysql.execute("UPDATE item_index SET price = ${itemIndex.price}, bid = ${itemIndex.bid}, ask = ${itemIndex.ask} WHERE id = ${itemIndex.id};")
+    }
 
     private fun runTransactionQueue(){
 

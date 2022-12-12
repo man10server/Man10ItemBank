@@ -30,5 +30,8 @@ object ItemBankAPI {
         ItemData.getItemAmount(uuid, ItemData.getID(key), callBack)
     }
 
+    fun setItemPrice(item: String,bid:Double,ask:Double){
+        ItemData.setItemPrice(item, bid, ask)
+    }
 
 }
