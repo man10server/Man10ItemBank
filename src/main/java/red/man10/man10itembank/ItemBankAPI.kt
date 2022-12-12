@@ -14,6 +14,10 @@ object ItemBankAPI {
         return list
     }
 
+    fun getItemData(item:String): ItemData.ItemIndex? {
+        return ItemData.getItemData(item)
+    }
+
     fun addItemAmount(order: UUID?, target: UUID, key: String, amount: Int, callBack : (Int?)->Unit = {}){
         ItemData.addItemAmount(order, target, ItemData.getID(key), amount, callBack)
     }
