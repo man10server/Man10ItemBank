@@ -8,6 +8,7 @@ import org.bukkit.NamespacedKey
 import org.bukkit.enchantments.Enchantment
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
+import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.inventory.InventoryClickEvent
 import org.bukkit.event.inventory.InventoryCloseEvent
@@ -168,8 +169,7 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
 
 
         fun click(e:InventoryClickEvent){
-            if (actionData == null)return
-            actionData!!.action(e)
+            actionData?.action(e)
         }
 
         fun icon():ItemStack{
@@ -194,23 +194,24 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
 
             if (p !is Player)return
 
-            val menu = get(p)
+            val menu = get(p)?:return
 
-            if (menu?.clickAction != null){
-                menu.clickAction!!.action(e)
-            }
+            menu.clickAction?.action(e)
 
             val item = e.currentItem?:return
             val data = Button.get(item)?:return
             e.isCancelled = true
+
+            Bukkit.getLogger().info("Click")
             data.click(e)
         }
 
-        @EventHandler
+        @EventHandler(priority = EventPriority.LOW)
         fun closeEvent(e:InventoryCloseEvent){
 
             if (e.player !is Player)return
             val menu = get(e.player as Player)?:return
+            Bukkit.getLogger().info("Close")
             menu.close(e)
         }
 
