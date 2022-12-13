@@ -202,7 +202,6 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
             val data = Button.get(item)?:return
             e.isCancelled = true
 
-            Bukkit.getLogger().info("Click")
             data.click(e)
         }
 
@@ -211,7 +210,6 @@ open class MenuFramework(val p:Player,menuSize: Int, title: String) {
 
             if (e.player !is Player)return
             val menu = get(e.player as Player)?:return
-            Bukkit.getLogger().info("Close")
             menu.close(e)
         }
 
