@@ -89,7 +89,7 @@ class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出
         }
 
         //next
-        if (menu.getItem(44) != null){
+        if (inc>=44){
             val next = Button(Material.RED_STAINED_GLASS_PANE)
             next.title("次のページへ")
             next.setClickAction{ TakeMenu(p,page+1).open() }
