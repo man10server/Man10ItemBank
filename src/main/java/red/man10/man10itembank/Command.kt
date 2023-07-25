@@ -1,18 +1,101 @@
 package red.man10.man10itembank
 
+import net.kyori.adventure.text.Component.text
+import net.kyori.adventure.text.event.ClickEvent
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
+import red.man10.man10itembank.menu.ItemPayMenu
 import red.man10.man10itembank.menu.MainMenu
 import red.man10.man10itembank.util.Utility
+import red.man10.man10itembank.util.Utility.prefix
 import red.man10.man10itembank.util.Utility.sendError
 import red.man10.man10itembank.util.Utility.sendMsg
+import java.util.*
 
 object Command : CommandExecutor {
+
+    private val itemPayMap = HashMap<UUID,Pair<UUID,Int>>()
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
+
+        if (label == "ipay"){
+            if (sender !is Player)return false
+            if (!Utility.hasUserPermission(sender))return false
+
+            //ipay sender amount
+            if (args.size != 2){
+                sendMsg(sender,"§d§l/ipay <送る相手> <個数> : アイテムバンクのアイテムを送ります")
+                sendMsg(sender,"§d§lコマンドを打つとアイテムを選ぶメニューが開きます")
+                return true
+            }
+
+            if (args[0] == "cancel"){
+                itemPayMap.remove(sender.uniqueId)
+                sendMsg(sender,"§d§アイテムペイをキャンセルしました")
+                return true
+            }
+
+            if (args[0] == "c1"){
+
+                val data = itemPayMap[sender.uniqueId]?:return true
+                val p = Bukkit.getPlayer(data.first)?:return true
+                val item = args[1]
+                val itemData = ItemData.getItemData(item) ?: return true
+
+                sendMsg(sender,"§a§l相手:${p.name} アイテム:${itemData.itemKey} 個数:${String.format("%,d", data.second)}個")
+                sender.sendMessage(text(prefix).append(text("§b§l§n[送る]").clickEvent(ClickEvent.runCommand("/ipay c2 $item"))))
+                return true
+            }
+
+            //確認処理
+            if (args[0] == "c2"){
+
+                val data = itemPayMap[sender.uniqueId]?:return true
+                val id = ItemData.getID(args[1])
+
+                if (id == -1){
+                    return true
+                }
+
+                itemPayMap.remove(sender.uniqueId)
+
+                ItemData.takeItemAmount(sender.uniqueId,sender.uniqueId,id,data.second){
+                    if (it == null){
+                        sendMsg(sender,"アイテムの数が足りません！")
+                        return@takeItemAmount
+                    }
+
+                    ItemData.addItemAmount(sender.uniqueId,data.first,id,data.second){
+                        val p = Bukkit.getPlayer(data.first)?:return@addItemAmount
+                        sendMsg(p,"§e§l${sender.name}から${args[1]}を${String.format("%,d",data.second)}個受け取りました")
+                        sendMsg(sender,"§a${args[1]}を${data.second}個送りました")
+                    }
+                }
+
+                return true
+            }
+
+            val uuid = Bukkit.getPlayer(args[0])?.uniqueId
+            val amount = args[1].toIntOrNull()
+
+            if (uuid == null){
+                sendMsg(sender,"§c§lオンラインのプレイヤーにのみ送れます")
+                return true
+            }
+
+            if (amount == null){
+                sendMsg(sender,"§c§l数字で入力してください")
+                return true
+            }
+
+            sendMsg(sender,"§e§l送るアイテムを選択してください")
+
+            itemPayMap[sender.uniqueId] = Pair(uuid,amount)
+            ItemPayMenu(sender,0).open()
+        }
 
         if (label=="mib"){
             if (sender !is Player)return false

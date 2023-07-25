@@ -19,6 +19,7 @@ class Man10ItemBank : JavaPlugin() {
 
         getCommand("mib")!!.setExecutor(Command)
         getCommand("mibop")!!.setExecutor(Command)
+        getCommand("ipay")!!.setExecutor(Command)
 
         server.pluginManager.registerEvents(MenuFramework.MenuListener,this)
 

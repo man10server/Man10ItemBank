@@ -8,3 +8,5 @@ commands:
     default: op
   mibop:
     default: op
+  ipay:
+    default: op
