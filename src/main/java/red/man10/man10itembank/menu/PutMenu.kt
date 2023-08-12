@@ -4,6 +4,7 @@ import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.inventory.Inventory
 import red.man10.man10itembank.ItemData
+import red.man10.man10itembank.Man10ItemBank
 import red.man10.man10itembank.util.Utility.format
 import red.man10.man10itembank.util.Utility.sendMsg
 
@@ -31,7 +32,18 @@ class PutMenu(p:Player) : MenuFramework(p,54,"アイテムを保存する"){
         for (i in 0 until 45){
 
             val item = menu.getItem(i)?:continue
-            val data = ItemData.getItemData(item)?:continue
+            val data = ItemData.getItemData(item)
+
+            if (data == null){
+                if (!Man10ItemBank.plugin.config.getStringList("noDropItems").contains(p.uniqueId.toString())){
+                    p.world.dropItem(p.location, item) {
+                        it.owner = p.uniqueId
+                        it.setCanMobPickup(false)
+                        it.pickupDelay = 0
+                    }
+                }
+                continue
+            }
 
             val amount = putData[data.id]?:0
 

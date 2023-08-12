@@ -5,18 +5,44 @@ import org.bukkit.Material
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
+import org.bukkit.command.TabCompleter
 import org.bukkit.entity.Player
 import red.man10.man10itembank.menu.MainMenu
 import red.man10.man10itembank.util.Utility
 import red.man10.man10itembank.util.Utility.sendError
 import red.man10.man10itembank.util.Utility.sendMsg
 
-object Command : CommandExecutor {
+object Command : CommandExecutor, TabCompleter {
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
 
         if (label=="mib"){
             if (sender !is Player)return false
             if (!Utility.hasUserPermission(sender))return false
+
+            if (args.size == 2 && args[0] == "drop"){
+                val isOn = args[1] == "on"
+                val list = Man10ItemBank.plugin.config.getStringList("noDropItems")
+                if (isOn) {
+                    if (!list.contains(sender.uniqueId.toString())) {
+                        sendError(sender, "すでに落とすようになっています")
+                        return true
+                    }
+                    list.remove(sender.uniqueId.toString())
+                    Man10ItemBank.plugin.config.set("noDropItems", list)
+                    Man10ItemBank.plugin.saveConfig()
+                    sendMsg(sender, "mibで違うアイテムを入れたときに落とすようになりました")
+                } else {
+                    if (list.contains(sender.uniqueId.toString())) {
+                        sendError(sender, "すでに落とさないようになっています")
+                        return true
+                    }
+                    list.add(sender.uniqueId.toString())
+                    Man10ItemBank.plugin.config.set("noDropItems", list)
+                    Man10ItemBank.plugin.saveConfig()
+                    sendMsg(sender, "mibで違うアイテムを入れたときに落とさないようになりました")
+                }
+                return true
+            }
 
             MainMenu(sender).open()
         }
@@ -26,6 +52,21 @@ object Command : CommandExecutor {
         return false
     }
 
+    override fun onTabComplete(sender: CommandSender, command: Command, alias: String, args: Array<out String>): MutableList<String>? {
+        if (args.isEmpty()){
+            return null
+        }
+
+        if (args.size == 1){
+            return mutableListOf("drop")
+        }
+
+        if (args.size == 2 && args[0] == "drop"){
+            return mutableListOf("on","off")
+        }
+
+        return null
+    }
 
     private fun mibop(sender: CommandSender, args: Array<out String>?){
 

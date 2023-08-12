@@ -18,6 +18,7 @@ class Man10ItemBank : JavaPlugin() {
         saveDefaultConfig()
 
         getCommand("mib")!!.setExecutor(Command)
+        getCommand("mib")!!.tabCompleter = Command
         getCommand("mibop")!!.setExecutor(Command)
 
         server.pluginManager.registerEvents(MenuFramework.MenuListener,this)
