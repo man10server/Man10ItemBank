@@ -21,7 +21,8 @@ object Event : Listener{
         val item = e.item.itemStack
         val data = ItemData.getItemData(item)?:return
         val amount = item.amount
-        item.amount = 0
+        e.item.remove()
+        e.isCancelled = true
 
         //アイテムを追加
         ItemData.addItemAmount(p.uniqueId,p.uniqueId,data.id,amount)
