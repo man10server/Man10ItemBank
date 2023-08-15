@@ -22,6 +22,13 @@ class PutMenu(p:Player) : MenuFramework(p,54,"アイテムを保存する"){
         setCloseListener{e->
             putItemToItemStorage(p,e.inventory)
         }
+
+        setClickListener{e ->
+            val item = e.currentItem?:return@setClickListener
+            if (ItemData.getItemData(item) == null){
+                e.isCancelled = true
+            }
+        }
     }
 
     private fun putItemToItemStorage(p:Player, menu:Inventory){
