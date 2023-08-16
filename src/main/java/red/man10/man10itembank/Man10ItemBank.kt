@@ -9,7 +9,7 @@ class Man10ItemBank : JavaPlugin() {
 
     companion object{
         lateinit var plugin : JavaPlugin
-        var denyAutoCollectUsers = mutableListOf<UUID>()
+        var allowAutoCollectUsers = mutableListOf<UUID>()
     }
 
     override fun onEnable() {

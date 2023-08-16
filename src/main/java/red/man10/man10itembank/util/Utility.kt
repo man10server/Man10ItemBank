@@ -85,6 +85,10 @@ object Utility {
         return true
     }
 
+    fun hasCollectPermission(p:Player):Boolean{
+        return p.hasPermission("market.collect")
+    }
+
     fun hasOPPermission(p:Player):Boolean{
         if (!p.hasPermission("market.op")){
             sendError(p,"あなたには権限がありません！")

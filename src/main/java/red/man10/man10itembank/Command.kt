@@ -102,18 +102,21 @@ object Command : CommandExecutor {
             if (!Utility.hasUserPermission(sender))return false
 
             if (args.isNotEmpty()){
+
+                if (!Utility.hasCollectPermission(sender))return true
+
                 if (args[0] == "collect"){
                     if (args.size == 1){
                         sendError(sender,"/mib collect <on/off>")
                         return false
                     }
                     if (args[1] == "on"){
-                        Man10ItemBank.denyAutoCollectUsers.remove(sender.uniqueId)
+                        Man10ItemBank.allowAutoCollectUsers.add(sender.uniqueId)
                         sendMsg(sender,"自動回収を有効にしました")
                         return false
                     }
                     if (args[1] == "off"){
-                        Man10ItemBank.denyAutoCollectUsers.add(sender.uniqueId)
+                        Man10ItemBank.allowAutoCollectUsers.remove(sender.uniqueId)
                         sendMsg(sender,"自動回収を無効にしました")
                         return false
                     }
