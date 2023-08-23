@@ -58,7 +58,7 @@ class ItemPayMenu(p:Player,page:Int) : MenuFramework(p,54,"§a§l送るアイテ
         if (page!=0){
             val previous = Button(Material.RED_STAINED_GLASS_PANE)
             previous.title("前のページへ")
-            previous.setClickAction{ TakeMenu(p,page-1).open() }
+            previous.setClickAction{ ItemPayMenu(p,page-1).open() }
             arrayOf(45,46,47).forEach { setButton(previous,it) }
 
         }
@@ -67,7 +67,7 @@ class ItemPayMenu(p:Player,page:Int) : MenuFramework(p,54,"§a§l送るアイテ
         if (inc>=44){
             val next = Button(Material.RED_STAINED_GLASS_PANE)
             next.title("次のページへ")
-            next.setClickAction{ TakeMenu(p,page+1).open() }
+            next.setClickAction{ ItemPayMenu(p,page+1).open() }
             arrayOf(51,52,53).forEach { setButton(next,it) }
         }
 
