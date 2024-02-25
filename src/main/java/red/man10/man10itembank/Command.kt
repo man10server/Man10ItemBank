@@ -45,6 +45,10 @@ object Command : CommandExecutor {
                 val item = args[1]
                 val itemData = ItemData.getItemData(item) ?: return true
 
+                if (data.second<=0){
+                    return false
+                }
+
                 sendMsg(sender,"§a§l相手:${p.name} アイテム:${itemData.itemKey} 個数:${String.format("%,d", data.second)}個")
                 sender.sendMessage(text(prefix).append(text("§b§l§n[送る]").clickEvent(ClickEvent.runCommand("/ipay c2 $item"))))
                 return true
@@ -58,6 +62,10 @@ object Command : CommandExecutor {
 
                 if (id == -1){
                     return true
+                }
+
+                if (data.second<=0) {
+                    return false
                 }
 
                 itemPayMap.remove(sender.uniqueId)
@@ -86,8 +94,8 @@ object Command : CommandExecutor {
                 return true
             }
 
-            if (amount == null){
-                sendMsg(sender,"§c§l数字で入力してください")
+            if (amount == null || amount<=0){
+                sendMsg(sender,"§c§l数字で1個以上を入力してください")
                 return true
             }
 
