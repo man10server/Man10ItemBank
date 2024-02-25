@@ -5,6 +5,7 @@ import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.entity.EntityPickupItemEvent
 import org.bukkit.event.player.PlayerJoinEvent
+import org.bukkit.event.player.PlayerQuitEvent
 import red.man10.man10itembank.util.Utility
 import java.util.concurrent.Executors
 
@@ -30,7 +31,8 @@ object Event : Listener{
         e.isCancelled = true
 
         //アイテムを追加
-        ItemData.addItemAmount(p.uniqueId,p.uniqueId,data.id,amount)
+//        ItemData.addItemAmount(p.uniqueId,p.uniqueId,data.id,amount)
+        ItemData.addCacheItemAmount(p.uniqueId,data.id,amount)
     }
 
     @EventHandler
@@ -44,6 +46,12 @@ object Event : Listener{
             val ret = if (Man10ItemBank.allowAutoCollectUsers.contains(p.uniqueId)) "有効" else "無効"
             Utility.sendMsg(p,"アイテムバンクの自動保存は${ret}です")
         }
+    }
+
+    @EventHandler
+    fun logout(e:PlayerQuitEvent){
+        val p = e.player
+        ItemData.commitCachedItemBank(p.uniqueId)
     }
 
 }

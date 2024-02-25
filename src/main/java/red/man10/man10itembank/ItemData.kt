@@ -17,6 +17,8 @@ object ItemData {
     private val transactionQueue  = LinkedBlockingQueue<()->Unit>()
     private var itemIndex = ConcurrentHashMap<Int,ItemIndex>()
 
+    private var cacheItemBank = ConcurrentHashMap<Pair<UUID,Int>,Int>()
+
     private var transactionThread = Thread{ transaction() }
 
     private lateinit var mysql : MySQLManager
@@ -211,6 +213,21 @@ object ItemData {
             callBack.invoke(asyncGetItemAmount(uuid, id))
         }
         addTransaction(transaction)
+    }
+
+    fun addCacheItemAmount(uuid: UUID,id:Int,amount:Int){
+        val key = Pair(uuid,id)
+        val bankAmount = cacheItemBank[key] ?: 0
+        val addedAmount = bankAmount + amount
+        cacheItemBank[key] = addedAmount
+    }
+
+    fun commitCachedItemBank(uuid: UUID){
+
+        val filtered = cacheItemBank.filter { it.key.first == uuid }
+        for (bank in filtered){
+            addItemAmount(uuid,uuid,bank.key.second,bank.value)
+        }
     }
 
 /////////////////////////////////キューの中で、キューに突っ込む処理を入れないこと(キューが詰まるため)////////////////////////////////////////
