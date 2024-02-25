@@ -121,6 +121,7 @@ object Command : CommandExecutor {
                     if (args[1] == "on"){
                         Man10ItemBank.allowAutoCollectUsers.add(sender.uniqueId)
                         sendMsg(sender,"自動回収を有効にしました ログアウト時にまとめてアイテムバンクに保存されます")
+                        sendMsg(sender,"サーバーダウン等で保存に失敗したアイテムの補填等はありません。")
                         return false
                     }
                     if (args[1] == "off"){
