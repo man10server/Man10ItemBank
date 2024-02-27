@@ -227,6 +227,7 @@ object ItemData {
         val filtered = cacheItemBank.filter { it.key.first == uuid }
         for (bank in filtered){
             addItemAmount(uuid,uuid,bank.key.second,bank.value)
+            cacheItemBank.remove(bank.key)
         }
     }
 
