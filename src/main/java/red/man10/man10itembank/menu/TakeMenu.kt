@@ -107,23 +107,22 @@ class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出
                 return@takeItemAmount
             }
 
-            if (p.inventory.firstEmpty()==-1){
-                Utility.sendError(p,"インベントリがいっぱいなので取り出すことができません")
-                Log.storageLog(p.uniqueId,p.uniqueId,id,0,0,"FailedTakingItem(FullOfInventory)")
-                ItemData.addItemAmount(p.uniqueId,p.uniqueId,id,amount)
-                return@takeItemAmount
-            }
+            Bukkit.getScheduler().runTask(Man10ItemBank.plugin, Runnable {
+                if (p.inventory.firstEmpty()==-1){
+                    Utility.sendError(p,"インベントリがいっぱいなので取り出すことができません")
+                    Log.storageLog(p.uniqueId,p.uniqueId,id,0,0,"FailedTakingItem(FullOfInventory)")
+                    ItemData.addItemAmount(p.uniqueId,p.uniqueId,id,amount)
+                    return@Runnable
+                }
 
-            val data = ItemData.getItemData(id)!!
-            Utility.sendMsg(p,"${amount}個取り出しました(現在の在庫:${Utility.format(it)})")
+                val data = ItemData.getItemData(id)!!
+                Utility.sendMsg(p,"${amount}個取り出しました(現在の在庫:${Utility.format(it)})")
 
-            val clone = data.item!!.clone()
+                val clone = data.item!!.clone()
 
-            clone.amount = amount
-
-            p.inventory.addItem(clone)
-
-
+                clone.amount = amount
+                p.inventory.addItem(clone)
+            })
         }
 
 
