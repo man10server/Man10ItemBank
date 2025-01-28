@@ -9,12 +9,12 @@ import red.man10.man10itembank.Log
 import red.man10.man10itembank.Man10ItemBank
 import red.man10.man10itembank.util.Utility
 
-class TakeMenu(p:Player,page:Int) : MenuFramework(p,54,"アイテムを取り出す"){
+class TakeMenu(p:Player,private val page : Int) : MenuFramework(p,54,"アイテムを取り出す"){
 
-    init {
+    override fun init() {
 
         //アイテムを入れられないように
-        setClickListener{ it.isCancelled = true }
+        setClickAction(){ it.isCancelled = true }
 
         val itemIndex = ItemData.getItemIndexMap().values.toList()
 

@@ -8,12 +8,12 @@ import red.man10.man10itembank.ItemData
 import red.man10.man10itembank.Man10ItemBank
 import red.man10.man10itembank.util.Utility
 
-class ItemPayMenu(p:Player,page:Int) : MenuFramework(p,54,"§a§l送るアイテムを選択"){
+class ItemPayMenu(p:Player,private val page:Int) : MenuFramework(p,54,"§a§l送るアイテムを選択"){
 
-    init {
+    override fun init()  {
 
         //アイテムを入れられないように
-        setClickListener{ it.isCancelled = true }
+        setClickAction{ it.isCancelled = true }
 
         val itemIndex = ItemData.getItemIndexMap().values.toList()
 

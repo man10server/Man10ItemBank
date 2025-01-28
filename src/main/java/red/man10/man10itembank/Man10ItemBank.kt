@@ -19,6 +19,8 @@ class Man10ItemBank : JavaPlugin() {
 
         saveDefaultConfig()
 
+        MenuFramework.setup(this)
+
         getCommand("mib")!!.setExecutor(Command)
         getCommand("mibop")!!.setExecutor(Command)
         getCommand("ipay")!!.setExecutor(Command)

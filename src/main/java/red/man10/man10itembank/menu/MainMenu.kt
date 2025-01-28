@@ -5,7 +5,7 @@ import org.bukkit.entity.Player
 
 class MainMenu(p:Player) : MenuFramework(p,36, "§f§lアイテムバンク") {
 
-    init {
+    override fun init() {
         val pane = Button(Material.LIGHT_BLUE_STAINED_GLASS_PANE)
         pane.title("")
 

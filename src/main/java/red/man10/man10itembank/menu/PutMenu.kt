@@ -9,7 +9,7 @@ import red.man10.man10itembank.util.Utility.sendMsg
 
 class PutMenu(p:Player) : MenuFramework(p,54,"アイテムを保存する"){
 
-    init {
+    override fun init() {
         val putButton = Button(Material.RED_STAINED_GLASS_PANE)
         putButton.title("§c§l保存")
 
@@ -19,12 +19,12 @@ class PutMenu(p:Player) : MenuFramework(p,54,"アイテムを保存する"){
 
         arrayOf(45,46,47,48,49,50,51,52,53).forEach { setButton(putButton,it) }
 
-        setCloseListener{e->
+        setCloseAction{e->
             putItemToItemStorage(p,e.inventory)
         }
 
-        setClickListener{e ->
-            val item = e.currentItem?:return@setClickListener
+        setClickAction{e ->
+            val item = e.currentItem?:return@setClickAction
             if (ItemData.getItemData(item) == null){
                 e.isCancelled = true
             }
