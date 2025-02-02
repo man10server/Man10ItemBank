@@ -234,6 +234,7 @@ open class MenuFramework(val p:Player,private val menuSize: Int, private val tit
 
 
         fun click(e:InventoryClickEvent){
+            e.isCancelled = true
             actionData?.action(e)
         }
 
@@ -275,10 +276,10 @@ open class MenuFramework(val p:Player,private val menuSize: Int, private val tit
             menu.clickAction?.action(e)
 
             val item = e.currentItem?:return
-            val data = Button.get(item) ?:return
+            val button = Button.get(item) ?:return
             e.isCancelled = true
 
-            data.click(e)
+            button.click(e)
         }
 
         @EventHandler
@@ -287,6 +288,11 @@ open class MenuFramework(val p:Player,private val menuSize: Int, private val tit
             if (e.player !is Player)return
 
             val menu = peek(e.player as Player) ?:return
+
+            //メニューが違う場合は無視
+            if (e.view.title != menu.title){
+                return
+            }
 
             menu.close(e)
         }
