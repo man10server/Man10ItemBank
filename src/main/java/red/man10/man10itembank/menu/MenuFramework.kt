@@ -174,7 +174,8 @@ open class MenuFramework(val p:Player,private val menuSize: Int, private val tit
             }
 
             fun isButton(item:ItemStack):Boolean{
-                return get(item)!=null
+                val meta = item.itemMeta?:return false
+                return meta.persistentDataContainer[BUTTON_KEY, PersistentDataType.STRING] != null
             }
         }
 
