@@ -319,6 +319,7 @@ open class MenuFramework(val p:Player,private val menuSize: Int, private val tit
             val item = e.item?:return
             if (!Button.isButton(item))return
             item.amount = 0
+            e.isCancelled = true
         }
 
     }
