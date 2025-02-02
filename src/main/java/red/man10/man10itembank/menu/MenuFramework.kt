@@ -275,7 +275,8 @@ open class MenuFramework(val p:Player,private val menuSize: Int, private val tit
 
                 //ボタンをクリックしたインベントリがプレイヤーのインベントリの場合
                 if (e.clickedInventory == p.inventory){
-                    Bukkit.getLogger().info("clicked player inventory")
+                    Bukkit.broadcast(text("§c§lエラー発生。レポートをお願いします。-611"))
+                    Bukkit.getLogger().info("Man10ItemBank Menu Error (${p.name}) -611")
                     item.amount = 0
                     return
                 }
@@ -320,7 +321,10 @@ open class MenuFramework(val p:Player,private val menuSize: Int, private val tit
             val item = e.item?:return
             if (!Button.isButton(item))return
             item.amount = 0
+
             e.isCancelled = true
+            Bukkit.broadcast(text("§c§lエラー発生。レポートをお願いします。-611"))
+            Bukkit.getLogger().info("Man10ItemBank Menu Error (${e.player.name}) -611")
         }
 
     }
