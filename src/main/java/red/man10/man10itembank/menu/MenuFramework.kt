@@ -292,8 +292,9 @@ open class MenuFramework(val p:Player,private val menuSize: Int, private val tit
                     return
                 }
 
-                val button = Button.get(item)!!
-                button.click(e)
+                Button.get(item)?.let {
+                    it.click(e)
+                }
             }
 
             val menu = peek(p) ?:return
@@ -323,6 +324,7 @@ open class MenuFramework(val p:Player,private val menuSize: Int, private val tit
             if (e.view.title != menu.title){
                 return
             }
+
 
             menu.close(e)
         }
