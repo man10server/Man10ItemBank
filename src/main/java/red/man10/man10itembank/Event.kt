@@ -13,27 +13,27 @@ object Event : Listener{
 
     private val thread = Executors.newSingleThreadExecutor()
 
-    @EventHandler
-    fun pickupEvent(e:EntityPickupItemEvent){
-        val p = e.entity
-        if (p !is Player)return
-
-        //許可してない人はリターン
-        if (!Man10ItemBank.allowAutoCollectUsers.contains(p.uniqueId)){
-            return
-        }
-
-        //ドロップアイテムの取得
-        val item = e.item.itemStack
-        val data = ItemData.getItemData(item)?:return
-        val amount = item.amount
-        e.item.remove()
-        e.isCancelled = true
-
-        //アイテムを追加
-//        ItemData.addItemAmount(p.uniqueId,p.uniqueId,data.id,amount)
-        ItemData.addCacheItemAmount(p.uniqueId,data.id,amount)
-    }
+//    @EventHandler
+//    fun pickupEvent(e:EntityPickupItemEvent){
+//        val p = e.entity
+//        if (p !is Player)return
+//
+//        //許可してない人はリターン
+//        if (!Man10ItemBank.allowAutoCollectUsers.contains(p.uniqueId)){
+//            return
+//        }
+//
+//        //ドロップアイテムの取得
+//        val item = e.item.itemStack
+//        val data = ItemData.getItemData(item)?:return
+//        val amount = item.amount
+//        e.item.remove()
+//        e.isCancelled = true
+//
+//        //アイテムを追加
+////        ItemData.addItemAmount(p.uniqueId,p.uniqueId,data.id,amount)
+//        ItemData.addCacheItemAmount(p.uniqueId,data.id,amount)
+//    }
 
     @EventHandler
     fun login(e:PlayerJoinEvent){
