@@ -315,6 +315,7 @@ object ItemData {
                 log("ID:${data.id},Name:${data.itemKey} アイテムデータの取得に失敗！")
                 continue
             }
+            log("ID:${data.id},Name:${data.itemKey} アイテムデータの取得に成功")
 
             index[data.id] = data
         }

@@ -33,21 +33,23 @@ object Utility {
     }
 
     fun log(text: String,player: Player? = null){
-//        Bukkit.getLogger().info(prefix +text)
-        Log.systemLog(player?.uniqueId,text)
+        Bukkit.getLogger().info(prefix +text)
+//        Log.systemLog(player?.uniqueId,text)
     }
 
     ///////////////////////////////
     //base 64
     //////////////////////////////
     fun itemFromBase64(data: String): ItemStack? {
-        val bytes = Base64.getDecoder().decode(data)
+        val bytes = Base64Coder.decodeLines(data)
+        print("ItemFromBase64 bytes size: ${bytes.size}")
         return ItemStack.deserializeBytes(bytes)
     }
 
     fun itemToBase64(item: ItemStack): String {
         val bytes = item.serializeAsBytes()
-        return Base64.getEncoder().encodeToString(bytes)
+        print("ItemToBase64 bytes size: ${bytes.size}")
+        return Base64Coder.encodeLines(bytes)
     }
     fun hasUserPermission(p:Player):Boolean{
         if (!p.hasPermission("market.user")){
