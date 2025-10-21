@@ -10,6 +10,7 @@ import org.yaml.snakeyaml.external.biz.base64Coder.Base64Coder
 import red.man10.man10itembank.Log
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.util.Base64
 
 object Utility {
 
@@ -39,44 +40,15 @@ object Utility {
     ///////////////////////////////
     //base 64
     //////////////////////////////
-    fun itemFromBase64(data: String): ItemStack? = try {
-        val inputStream = ByteArrayInputStream(Base64Coder.decodeLines(data))
-        val dataInput = BukkitObjectInputStream(inputStream)
-        val items = arrayOfNulls<ItemStack>(dataInput.readInt())
-
-        // Read the serialized inventory
-        for (i in items.indices) {
-            items[i] = dataInput.readObject() as ItemStack
-        }
-
-        dataInput.close()
-        items[0]
-    } catch (e: Exception) {
-        null
+    fun itemFromBase64(data: String): ItemStack? {
+        val bytes = Base64.getDecoder().decode(data)
+        return ItemStack.deserializeBytes(bytes)
     }
 
-    @Throws(IllegalStateException::class)
     fun itemToBase64(item: ItemStack): String {
-        try {
-            val outputStream = ByteArrayOutputStream()
-            val dataOutput = BukkitObjectOutputStream(outputStream)
-            val items = arrayOfNulls<ItemStack>(1)
-            items[0] = item
-            dataOutput.writeInt(items.size)
-
-            for (i in items.indices) {
-                dataOutput.writeObject(items[i])
-            }
-
-            dataOutput.close()
-
-            return Base64Coder.encodeLines(outputStream.toByteArray())
-
-        } catch (e: Exception) {
-            throw IllegalStateException("Unable to save item stacks.", e)
-        }
+        val bytes = item.serializeAsBytes()
+        return Base64.getEncoder().encodeToString(bytes)
     }
-
     fun hasUserPermission(p:Player):Boolean{
         if (!p.hasPermission("market.user")){
             sendError(p,"あなたには権限がありません！")
