@@ -3,6 +3,15 @@ version: '1.0'
 main: red.man10.man10itembank.Man10ItemBank
 api-version: 1.21
 
+# サーバー同梱のドライバに依存しないよう、起動時にMaven Centralから取得する。
+#  - mysql-connector-j : 旧実装の com.mysql.jdbc.Driver はConnector/J 8.0で削除済みのため必須
+#  - HikariCP          : コネクションプール
+# MySQLサーバーが5.7の場合は mysql-connector-j:8.0.33 まで下げる必要がある
+# (ただし8.1.0以下はCVE-2023-22102の影響を受けるためサーバー側の更新を推奨)
+libraries:
+  - com.mysql:mysql-connector-j:8.4.0
+  - com.zaxxer:HikariCP:5.1.0
+
 commands:
   mib:
     default: op

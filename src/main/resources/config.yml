@@ -3,4 +3,28 @@ mysql:
   db:
   user:
   pass:
-  port:
+  port: 3306
+
+  # trueにするとTLSを必須にする(sslMode=REQUIRED)
+  # falseの場合、認証情報とアイテムデータが平文で流れるため、DBが別ホストなら有効化を推奨
+  useSsl: false
+  # useSsl: false かつ caching_sha2_password を使う場合に必要
+  allowPublicKeyRetrieval: true
+
+  # デッドロック/ロック待ちタイムアウト時の再試行回数(0-5)
+  # ロールバックが保証されるエラーのみ再試行するため、二重適用は起きない
+  maxRetry: 2
+
+  pool:
+    # 在庫処理スレッド + ログスレッド + 余裕
+    maximumPoolSize: 6
+    minimumIdle: 1
+    # 接続確立の待ち時間
+    connectionTimeoutMs: 5000
+    # 応答待ちの上限。0にすると接続が黙って切れた際に永久にブロックするので0にしないこと
+    socketTimeoutMs: 15000
+    idleTimeoutMs: 300000
+    maxLifetimeMs: 1200000
+    validationTimeoutMs: 3000
+    # この時間returnされないコネクションを警告する(0で無効)
+    leakDetectionThresholdMs: 30000

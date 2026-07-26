@@ -4,13 +4,7 @@ import org.bukkit.Bukkit
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
-import org.bukkit.util.io.BukkitObjectInputStream
-import org.bukkit.util.io.BukkitObjectOutputStream
 import org.yaml.snakeyaml.external.biz.base64Coder.Base64Coder
-import red.man10.man10itembank.Log
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.util.Base64
 
 object Utility {
 
@@ -42,13 +36,11 @@ object Utility {
     //////////////////////////////
     fun itemFromBase64(data: String): ItemStack? {
         val bytes = Base64Coder.decodeLines(data)
-        print("ItemFromBase64 bytes size: ${bytes.size}")
         return ItemStack.deserializeBytes(bytes)
     }
 
     fun itemToBase64(item: ItemStack): String {
         val bytes = item.serializeAsBytes()
-        print("ItemToBase64 bytes size: ${bytes.size}")
         return Base64Coder.encodeLines(bytes)
     }
     fun hasUserPermission(p:Player):Boolean{

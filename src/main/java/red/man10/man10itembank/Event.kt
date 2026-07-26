@@ -54,4 +54,8 @@ object Event : Listener{
         ItemData.commitCachedItemBank(p.uniqueId)
     }
 
+    fun shutdown(){
+        thread.shutdownNow()
+    }
+
 }

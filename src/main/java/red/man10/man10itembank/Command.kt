@@ -70,16 +70,26 @@ object Command : CommandExecutor {
 
                 itemPayMap.remove(sender.uniqueId)
 
-                ItemData.takeItemAmount(sender.uniqueId,sender.uniqueId,id,data.second){
-                    if (it == null){
-                        sendMsg(sender,"アイテムの数が足りません！")
-                        return@takeItemAmount
-                    }
+                val itemKey = args[1]
 
-                    ItemData.addItemAmount(sender.uniqueId,data.first,id,data.second){
-                        val p = Bukkit.getPlayer(data.first)?:return@addItemAmount
-                        sendMsg(p,"§e§l${sender.name}から${args[1]}を${String.format("%,d",data.second)}個受け取りました")
-                        sendMsg(sender,"§a${args[1]}を${data.second}個送りました")
+                // 減算と加算を1つのDBトランザクションで行う。
+                // 旧実装は別トランザクションだったため、加算に失敗すると送った分が消えていた
+                ItemData.transferItem(sender.uniqueId,sender.uniqueId,data.first,id,data.second){ result ->
+
+                    when(result){
+
+                        is StockResult.Insufficient ->
+                            sendError(sender,"アイテムの数が足りません！")
+
+                        is StockResult.Error ->
+                            sendError(sender,"DBエラーのため送れませんでした。時間をおいて試してください")
+
+                        is StockResult.Updated ->{
+                            sendMsg(sender,"§a${itemKey}を${String.format("%,d",data.second)}個送りました")
+                            Bukkit.getPlayer(data.first)?.let {
+                                sendMsg(it,"§e§l${sender.name}から${itemKey}を${String.format("%,d",data.second)}個受け取りました")
+                            }
+                        }
                     }
                 }
 
@@ -91,6 +101,11 @@ object Command : CommandExecutor {
 
             if (uuid == null){
                 sendMsg(sender,"§c§lオンラインのプレイヤーにのみ送れます")
+                return true
+            }
+
+            if (uuid == sender.uniqueId){
+                sendMsg(sender,"§c§l自分自身には送れません")
                 return true
             }
 
@@ -142,6 +157,19 @@ object Command : CommandExecutor {
         return false
     }
 
+
+    //運営コマンド向けに、在庫不足とDB障害を区別して伝える
+    private fun reportStockResult(sender: CommandSender, result: StockResult){
+
+        when(result){
+
+            is StockResult.Updated -> sendMsg(sender,"成功！現在の在庫数:${Utility.format(result.amount)}")
+
+            is StockResult.Insufficient -> sendError(sender,"失敗！在庫が足りない、または上限を超えています")
+
+            is StockResult.Error -> sendError(sender,"失敗！DBエラー: ${result.message}")
+        }
+    }
 
     private fun mibop(sender: CommandSender, args: Array<out String>?){
 
@@ -300,19 +328,13 @@ object Command : CommandExecutor {
                     return
                 }
 
-                if (id ==null || amount == null){
-                    sendError(sender,"入力に誤りがあります")
+                if (id ==null || amount == null || amount <= 0){
+                    sendError(sender,"入力に誤りがあります(個数は1以上)")
                     return
                 }
 
-                ItemData.addItemAmount(order,p.uniqueId,id,amount) {
-
-                    if (it == -1){
-                        sendError(sender,"失敗！")
-                        return@addItemAmount
-                    }
-
-                    sendMsg(sender,"成功！現在の在庫数:${it}")
+                ItemData.changeItemAmount(order,p.uniqueId,id,amount,"OpAddItem") {
+                    reportStockResult(sender,it)
                 }
             }
 
@@ -333,19 +355,13 @@ object Command : CommandExecutor {
                     return
                 }
 
-                if (id ==null || amount == null){
-                    sendError(sender,"入力に誤りがあります")
+                if (id ==null || amount == null || amount <= 0){
+                    sendError(sender,"入力に誤りがあります(個数は1以上)")
                     return
                 }
 
-                ItemData.takeItemAmount(order,p.uniqueId,id,amount) {
-
-                    if (it == -1){
-                        sendError(sender,"失敗！")
-                        return@takeItemAmount
-                    }
-
-                    sendMsg(sender,"成功！現在の在庫数:${it}")
+                ItemData.changeItemAmount(order,p.uniqueId,id,-amount,"OpTakeItem") {
+                    reportStockResult(sender,it)
                 }
             }
 
@@ -373,7 +389,7 @@ object Command : CommandExecutor {
 
                 ItemData.setItemAmount(order,p.uniqueId,id,amount) {
 
-                    if (it == -1){
+                    if (it == null){
                         sendError(sender,"失敗！")
                         return@setItemAmount
                     }
@@ -386,7 +402,8 @@ object Command : CommandExecutor {
 
             "show" ->{
 
-                if (args.size!=4){
+                //引数は show <player> <id> の3つ。旧実装は4を要求していて常に失敗していた
+                if (args.size!=3){
                     sendError(sender,"/mibop show <player> <id>")
                     return
                 }

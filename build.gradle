@@ -22,6 +22,9 @@ repositories {
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
     implementation "org.jetbrains.kotlin:kotlin-stdlib"
+
+    // plugin.yml の libraries: で実行時に読み込まれるためcompileOnly
+    compileOnly 'com.zaxxer:HikariCP:5.1.0'
 }
 
 def targetJavaVersion = 21

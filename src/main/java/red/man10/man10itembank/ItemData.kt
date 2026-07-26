@@ -3,68 +3,140 @@ package red.man10.man10itembank
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
-import red.man10.man10itembank.util.MySQLManager
-import red.man10.man10itembank.util.MySQLManager.Companion.escapeStringForMySQL
+import org.bukkit.plugin.java.JavaPlugin
+import red.man10.man10itembank.util.Database
+import red.man10.man10itembank.util.DbResult
 import red.man10.man10itembank.util.Utility
 import red.man10.man10itembank.util.Utility.itemToBase64
 import red.man10.man10itembank.util.Utility.log
-import java.util.*
+import red.man10.man10itembank.util.executeQuery
+import red.man10.man10itembank.util.executeUpdate
+import java.sql.Connection
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.logging.Level
+
+/**
+ * 在庫操作の結果。
+ *
+ * 「在庫が足りない(＝正常な失敗)」と「DB障害(＝異常な失敗)」を区別する。
+ * 旧実装はどちらもnull/-1で表現していたため、DB障害時に
+ * 現物を渡してしまう(複製)・現物を消してしまう(消失)が起きていた。
+ */
+sealed interface StockResult {
+
+    /** 成功。amountは更新後の在庫 */
+    data class Updated(val amount: Int) : StockResult
+
+    /** 在庫不足、または上限超過。DBは変更されていない */
+    data object Insufficient : StockResult
+
+    /** DB障害・未登録アイテムなど。DBが変更されたかは保証されない */
+    data class Error(val message: String) : StockResult
+}
 
 object ItemData {
 
-    private val transactionQueue  = LinkedBlockingQueue<()->Unit>()
-    private var itemIndex = ConcurrentHashMap<Int,ItemIndex>()
+    private const val SHUTDOWN_TIMEOUT_MS = 15_000L
+    private const val ITEM_NAME_LIMIT = 128
+    private const val PLAYER_NAME_LIMIT = 16
 
-    private var cacheItemBank = ConcurrentHashMap<Pair<UUID,Int>,Int>()
+    // amount列はint。DB側でオーバーフローさせず、WHERE句で弾く
+    private const val MAX_AMOUNT = Int.MAX_VALUE
 
-    private var transactionThread = Thread{ transaction() }
+    private val transactionQueue = LinkedBlockingQueue<() -> Unit>()
 
-    private lateinit var mysql : MySQLManager
+    // 停止指示用の番兵。identityで判定するのでインスタンスを固定しておく
+    private val poison: () -> Unit = {}
 
-    init {
-        runTransactionQueue()
+    private var itemIndex = ConcurrentHashMap<Int, ItemIndex>()
 
-        val transaction = Transaction@{
-            asyncLoadItemIndex()
+    private var cacheItemBank = ConcurrentHashMap<Pair<UUID, Int>, Int>()
+
+    private lateinit var plugin: JavaPlugin
+    private lateinit var db: Database
+
+    private var transactionThread: Thread? = null
+
+    /**
+     * 起動処理。スキーマ検査とItemIndexの読み込みに失敗した場合はfalseを返す。
+     * (インデックスが空のまま動くと各所の data.item!! がNPEになるため、起動を止める)
+     */
+    fun start(plugin: JavaPlugin, database: Database): Boolean {
+
+        this.plugin = plugin
+        this.db = database
+
+        if (!verifySchema()) return false
+
+        if (!loadItemIndex()) return false
+
+        transactionThread = Thread({ transaction() }, "Man10ItemBank-Transaction").also {
+            it.isDaemon = false
+            it.start()
         }
 
-        addTransaction(transaction)
-
+        return true
     }
+
+    /**
+     * キューを処理し切ってからスレッドを止める。
+     * 旧実装はonDisableが空で、停止時に未処理のアイテム操作がそのまま消えていた。
+     */
+    fun shutdown() {
+
+        val thread = transactionThread ?: return
+
+        transactionQueue.add(poison)
+        thread.join(SHUTDOWN_TIMEOUT_MS)
+
+        if (thread.isAlive) {
+            plugin.logger.severe("在庫処理が${SHUTDOWN_TIMEOUT_MS}ms以内に完了しませんでした。強制停止します")
+            thread.interrupt()
+        }
+
+        val remaining = transactionQueue.count { it !== poison }
+        if (remaining > 0) {
+            plugin.logger.severe("未処理の在庫操作が${remaining}件残りました")
+        }
+
+        transactionThread = null
+    }
+
     //キューが詰まった時に確認するためのもの
-    fun getQueueSize():Int{
+    fun getQueueSize(): Int {
         return transactionQueue.size
     }
 
-    fun getItemData(id:Int):ItemIndex?{
+    fun getItemData(id: Int): ItemIndex? {
         return itemIndex[id]
     }
 
     //ItemStackからItemIndex取得
-    fun getItemData(item: ItemStack):ItemIndex?{
-        return itemIndex.filter { it.value.item?.isSimilar(item)?:false }.values.firstOrNull()
+    fun getItemData(item: ItemStack): ItemIndex? {
+        return itemIndex.values.firstOrNull { it.item?.isSimilar(item) ?: false }
     }
 
     //KeyからItemIndex取得
     fun getItemData(key: String): ItemIndex? {
-        return itemIndex.filter { it.value.itemKey == key }.values.firstOrNull()
+        return itemIndex.values.firstOrNull { it.itemKey == key }
     }
 
-    fun getID(key: String):Int{
-        return getItemData(key)?.id?:-1
+    fun getID(key: String): Int {
+        return getItemData(key)?.id ?: -1
     }
 
-    fun getItemIndexMap():Map<Int,ItemIndex>{
+    fun getItemIndexMap(): Map<Int, ItemIndex> {
         return itemIndex
     }
 
     //価格更新
-    fun setItemPrice(item:String,bid:Double,ask:Double){
+    fun setItemPrice(item: String, bid: Double, ask: Double) {
 
-        val data = getItemData(item)?:return
-        data.price = bid+ask/2
+        val data = getItemData(item) ?: return
+        // 旧実装は bid+ask/2 で括弧が無く、中間値になっていなかった
+        data.price = (bid + ask) / 2
         data.bid = bid
         data.ask = ask
 
@@ -76,316 +148,607 @@ object ItemData {
     }
 
     //ItemIndexに新規アイテムを登録
-    fun registerItem(player: Player, key:String, item:ItemStack,initialPrice:Double,tick:Double,callBack: (EnumResult)->Unit = {}){
+    fun registerItem(
+        player: Player,
+        key: String,
+        item: ItemStack,
+        initialPrice: Double,
+        tick: Double,
+        callBack: (EnumResult) -> Unit = {}
+    ) {
 
-        val transaction = Transaction@{
+        addTransaction {
 
-            if (getItemData(key)!=null){
+            if (getItemData(key) != null) {
                 callBack.invoke(EnumResult.FAILED)
-                return@Transaction
+                return@addTransaction
             }
 
-            mysql.execute("INSERT INTO item_index (item_key, item_name, price, bid, ask, tick, time, disabled, base64) " +
-                    "VALUES ('${escapeStringForMySQL(key)}', '${escapeStringForMySQL(item.i18NDisplayName?:"")}', ${initialPrice}, ${initialPrice}, ${initialPrice}, ${tick}, DEFAULT, 0, '${itemToBase64(item)}');")
+            val base64 = runCatching { itemToBase64(item) }.getOrNull()
 
-            asyncLoadItemIndex()
+            if (base64 == null) {
+                plugin.logger.severe("アイテムのシリアライズに失敗しました item_key:$key")
+                callBack.invoke(EnumResult.FAILED)
+                return@addTransaction
+            }
 
-            if (getItemData(key)!=null){
-                log("アイテムインデックス登録 item_key:${key}",player)
+            // item_keyにUNIQUE制約が無いため、メモリキャッシュだけでなくDBも見る
+            val duplicated = db.query(
+                "SELECT COUNT(*) FROM item_index WHERE item_key = ? AND disabled = 0", key
+            ) { rs -> if (rs.next()) rs.getInt(1) else 0 }
+
+            if (duplicated !is DbResult.Success || duplicated.value > 0) {
+                callBack.invoke(EnumResult.FAILED)
+                return@addTransaction
+            }
+
+            val result = db.update(
+                "INSERT INTO item_index (item_key, item_name, price, bid, ask, tick, time, disabled, base64) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, now(), 0, ?)",
+                key,
+                (item.i18NDisplayName ?: "").take(ITEM_NAME_LIMIT),
+                initialPrice,
+                initialPrice,
+                initialPrice,
+                tick,
+                base64
+            )
+
+            if (result is DbResult.Failure) {
+                callBack.invoke(EnumResult.FAILED)
+                return@addTransaction
+            }
+
+            loadItemIndex()
+
+            if (getItemData(key) != null) {
+                log("アイテムインデックス登録 item_key:${key}", player)
                 callBack.invoke(EnumResult.SUCCESSFUL)
-                return@Transaction
+                return@addTransaction
             }
 
             callBack.invoke(EnumResult.FAILED)
-            return@Transaction
         }
-
-        addTransaction(transaction)
     }
 
-    //アイテム削除 0:成功、1:存在しない、2:失敗
-    fun unregisterItem(player: Player,id:Int,callBack: (EnumResult)->Unit = {}){
+    //アイテム削除
+    fun unregisterItem(player: Player, id: Int, callBack: (EnumResult) -> Unit = {}) {
 
-        val transaction = Transaction@{
+        addTransaction {
 
             val data = getItemData(id)
 
-            if (data==null){
+            if (data == null) {
                 callBack.invoke(EnumResult.FAILED)
-                return@Transaction
+                return@addTransaction
             }
 
             val key = data.itemKey
 
-            mysql.execute("DELETE FROM item_index WHERE id=${id};")
-            asyncLoadItemIndex()
+            val result = db.update("DELETE FROM item_index WHERE id = ?", id)
 
-            if (getItemData(id) == null){
-                log("アイテムインデックス削除 item_key:${key}",player)
+            if (result is DbResult.Failure) {
+                callBack.invoke(EnumResult.FAILED)
+                return@addTransaction
+            }
+
+            loadItemIndex()
+
+            if (getItemData(id) == null) {
+                log("アイテムインデックス削除 item_key:${key}", player)
                 callBack.invoke(EnumResult.SUCCESSFUL)
-                return@Transaction
+                return@addTransaction
             }
 
             callBack.invoke(EnumResult.FAILED)
-            return@Transaction
         }
-
-        addTransaction(transaction)
-
     }
 
-    //返り値は在庫 nullは失敗
-    fun addItemAmount(order:UUID?,target:UUID, id: Int, amount: Int, callBack : (Int)->Unit = {}){
+    ////////////////////////////////////////////////////////////
+    //      在庫操作
+    ////////////////////////////////////////////////////////////
 
-        val transaction = Transaction@ {
-            val nowAmount = asyncGetItemAmount(target, id)
+    /**
+     * 在庫を増減する。失敗理由まで受け取れるので、プラグイン内からはこれを使う。
+     *
+     * @param delta 正で追加、負で取り出し
+     */
+    fun changeItemAmount(
+        order: UUID?,
+        target: UUID,
+        id: Int,
+        delta: Int,
+        action: String,
+        callBack: (StockResult) -> Unit = {}
+    ) {
 
-            val newAmount = nowAmount+amount
+        addTransaction {
 
-            asyncSetItemAmount(target, id, newAmount)
+            val result = asyncChangeAmount(target, id, delta)
 
-            Log.storageLog(order,target,id,amount,newAmount,"AddItem")
+            when (result) {
+                is StockResult.Updated -> Log.storageLog(order, target, id, delta, result.amount, action)
 
-            callBack.invoke(newAmount)
-            return@Transaction
+                is StockResult.Error -> plugin.logger.severe(
+                    "在庫操作に失敗しました($action) target=$target item_id=$id delta=$delta : ${result.message}"
+                )
+
+                is StockResult.Insufficient -> Unit
+            }
+
+            callBack.invoke(result)
+        }
+    }
+
+    /**
+     * アイテムを別のプレイヤーへ移す。
+     * 減算と加算を1つのDBトランザクションで行うため、片側だけ成功することがない。
+     */
+    fun transferItem(
+        order: UUID?,
+        from: UUID,
+        to: UUID,
+        id: Int,
+        amount: Int,
+        callBack: (StockResult) -> Unit = {}
+    ) {
+
+        addTransaction {
+
+            val result = asyncTransfer(order, from, to, id, amount)
+
+            if (result is StockResult.Error) {
+                plugin.logger.severe(
+                    "アイテムの送付に失敗しました from=$from to=$to item_id=$id amount=$amount : ${result.message}"
+                )
+            }
+
+            callBack.invoke(result)
+        }
+    }
+
+    //返り値は在庫。失敗時はコールバックが呼ばれない(詳細が必要な場合はchangeItemAmountを使う)
+    fun addItemAmount(order: UUID?, target: UUID, id: Int, amount: Int, callBack: (Int) -> Unit = {}) {
+
+        if (amount < 0) {
+            plugin.logger.severe("addItemAmountに負の数が渡されました target=$target item_id=$id amount=$amount")
+            return
         }
 
-        addTransaction(transaction)
-
+        changeItemAmount(order, target, id, amount, "AddItem") {
+            if (it is StockResult.Updated) callBack.invoke(it.amount)
+        }
     }
 
     //返り値は在庫(取り出せなかった場合はnull)
-    fun takeItemAmount(order: UUID?, target:UUID, id: Int, amount: Int, callBack: (Int?)->Unit =  {}){
+    fun takeItemAmount(order: UUID?, target: UUID, id: Int, amount: Int, callBack: (Int?) -> Unit = {}) {
 
-        val transaction = Transaction@ {
-            val nowAmount = asyncGetItemAmount(target, id)
-
-            val newAmount = nowAmount-amount
-
-            //取り出し失敗
-            if (newAmount < 0){
-                callBack.invoke(null)
-                return@Transaction
-            }
-            asyncSetItemAmount(target, id, newAmount)
-            Log.storageLog(order,target,id,amount,newAmount,"TakeItem")
-
-            callBack.invoke(newAmount)
-
-            return@Transaction
+        if (amount < 0) {
+            plugin.logger.severe("takeItemAmountに負の数が渡されました target=$target item_id=$id amount=$amount")
+            callBack.invoke(null)
+            return
         }
 
-        addTransaction(transaction)
-
+        changeItemAmount(order, target, id, -amount, "TakeItem") {
+            callBack.invoke((it as? StockResult.Updated)?.amount)
+        }
     }
 
     //アイテム数を設定する 返り値は最新の在庫
-    fun setItemAmount(order: UUID?,target:UUID, id: Int, amount: Int, callBack: (Int?)->Unit = {}){
+    fun setItemAmount(order: UUID?, target: UUID, id: Int, amount: Int, callBack: (Int?) -> Unit = {}) {
 
-        var newAmount = amount
+        val newAmount = if (amount < 0) 0 else amount
 
-        if (amount <0){ newAmount = 0 }
+        addTransaction {
 
-        val transaction = Transaction@ {
+            // ログはasyncSetAmountの中でコミット成功後に書く(変動量を出すため前の値が必要)
+            val result = asyncSetAmount(order, target, id, newAmount)
 
-            //倉庫の有無をチェック
-            val nowAmount = asyncGetItemAmount(target, id)
-
-            if (nowAmount == -1){
-                callBack.invoke(null)
-                return@Transaction
+            if (result is StockResult.Error) {
+                plugin.logger.severe("在庫の設定に失敗しました target=$target item_id=$id : ${result.message}")
             }
 
-            asyncSetItemAmount(target, id, newAmount)
-            Log.storageLog(order,target,id,amount,newAmount,"SetItem")
-
-            callBack.invoke(amount)
-            return@Transaction
+            callBack.invoke((result as? StockResult.Updated)?.amount)
         }
-
-        addTransaction(transaction)
-
     }
 
     //アイテム数を取得する、callBack関数は、取得後に走る処理、引数のresultが取得した数
-    fun getItemAmount(uuid:UUID,id: Int,callBack: (Int)->Unit = {}){
-        val transaction = Transaction@ {
-            callBack.invoke(asyncGetItemAmount(uuid, id))
+    fun getItemAmount(uuid: UUID, id: Int, callBack: (Int) -> Unit = {}) {
+        addTransaction {
+            callBack.invoke((asyncGetAmount(uuid, id) as? StockResult.Updated)?.amount ?: -1)
         }
-        addTransaction(transaction)
     }
 
-    fun addCacheItemAmount(uuid: UUID,id:Int,amount:Int){
-        val key = Pair(uuid,id)
-        val bankAmount = cacheItemBank[key] ?: 0
-        val addedAmount = bankAmount + amount
-        cacheItemBank[key] = addedAmount
+    fun addCacheItemAmount(uuid: UUID, id: Int, amount: Int) {
+        cacheItemBank.merge(Pair(uuid, id), amount) { old, new -> old + new }
     }
 
-    fun commitCachedItemBank(uuid: UUID){
+    fun commitCachedItemBank(uuid: UUID) {
 
-        val filtered = cacheItemBank.filter { it.key.first == uuid }
-        for (bank in filtered){
-            addItemAmount(uuid,uuid,bank.key.second,bank.value)
-            cacheItemBank.remove(bank.key)
+        val keys = cacheItemBank.keys.filter { it.first == uuid }
+
+        for (key in keys) {
+
+            // 先に取り出してからDBへ投げる
+            val amount = cacheItemBank.remove(key) ?: continue
+
+            // 旧実装はDBへ投げた直後にキャッシュを消していたため、書き込み失敗＝アイテム消失だった
+            changeItemAmount(uuid, uuid, key.second, amount, "AutoCollect") { result ->
+                if (result !is StockResult.Updated) {
+                    addCacheItemAmount(uuid, key.second, amount)
+                    plugin.logger.severe(
+                        "自動回収の書き込みに失敗したためキャッシュへ戻しました " +
+                                "uuid=$uuid item_id=${key.second} amount=$amount"
+                    )
+                }
+            }
         }
+    }
+
+    /**
+     * 全プレイヤーの自動回収キャッシュをDBへ流す。
+     * サーバー停止時、PlayerQuitEventはプラグイン無効化後に発火することがあるため
+     * onDisableから明示的に呼ぶ。
+     */
+    fun flushAllCaches() {
+
+        val uuids = cacheItemBank.keys.map { it.first }.distinct()
+
+        if (uuids.isEmpty()) return
+
+        plugin.logger.info("自動回収キャッシュ${cacheItemBank.size}件を書き込みます")
+
+        uuids.forEach { commitCachedItemBank(it) }
     }
 
 /////////////////////////////////キューの中で、キューに突っ込む処理を入れないこと(キューが詰まるため)////////////////////////////////////////
 
     //同時に実行されてほしくない処理は、ここに処理を投げる
-    private fun addTransaction(transaction:()->Unit){
+    private fun addTransaction(transaction: () -> Unit) {
         transactionQueue.add(transaction)
     }
 
-    //在庫を設定
-    private fun asyncSetItemAmount(uuid: UUID,id: Int,amount:Int):Boolean{
+    /**
+     * 倉庫行が無ければ作る。UNIQUE(uuid,item_id)前提の冪等なupsert。
+     * 旧実装はINSERT後にSELECTで確認し、失敗すると相互再帰でコネクションを食い潰していた。
+     */
+    private fun ensureStorageRow(con: Connection, uuid: UUID, id: Int, itemKey: String) {
 
-        getItemData(id) ?: return false
+        // オフラインプレイヤーの名前解決はMojang APIへの問い合わせでブロックしうるため、
+        // オンラインのプレイヤーを優先して引く
+        val name = Bukkit.getPlayer(uuid)?.name
+            ?: Bukkit.getOfflinePlayer(uuid).name
+            ?: uuid.toString()
 
-        mysql.execute("UPDATE item_storage SET amount = $amount,time=now() WHERE uuid='${uuid}' and item_id=${id};")
-
-        return true
+        con.executeUpdate(
+            "INSERT INTO item_storage (player, uuid, item_id, item_key, amount, time) " +
+                    "VALUES (?, ?, ?, ?, 0, now()) ON DUPLICATE KEY UPDATE id = id",
+            name.take(PLAYER_NAME_LIMIT), uuid, id, itemKey
+        )
     }
 
-    //在庫を取得
-    private fun asyncGetItemAmount(uuid: UUID,id: Int):Int{
+    /**
+     * 在庫を原子的に増減する。
+     *
+     * 旧実装は SELECT → 計算 → UPDATE(絶対値) だったため、
+     * SELECTが失敗すると-1を基準に計算して実在庫を破壊していた。
+     * 現在は1文の相対更新にし、在庫不足と上限超過をWHERE句で弾いている。
+     */
+    private fun asyncChangeAmount(uuid: UUID, id: Int, delta: Int): StockResult {
 
-        getItemData(id) ?: return -1
+        val data = getItemData(id) ?: return StockResult.Error("未登録のアイテムです item_id=$id")
 
-        val rs = mysql.query("select amount from item_storage where uuid='${uuid}' and item_id=${id};")?:return -1
+        val result = db.transaction("在庫更新 uuid=$uuid item_id=$id delta=$delta") { con ->
 
-        //倉庫が存在しなかった場合
-        if (!rs.next()){
-            asyncCreateItemStorage(uuid,id)
-            return 0
+            ensureStorageRow(con, uuid, id, data.itemKey)
+
+            val updated = con.executeUpdate(
+                "UPDATE item_storage SET amount = amount + ?, time = now() " +
+                        "WHERE uuid = ? AND item_id = ? AND amount + ? BETWEEN 0 AND ?",
+                delta, uuid, id, delta, MAX_AMOUNT
+            )
+
+            //在庫不足または上限超過。DBは変更されていない
+            if (updated == 0) return@transaction StockResult.Insufficient
+
+            val amount = con.executeQuery(
+                "SELECT amount FROM item_storage WHERE uuid = ? AND item_id = ?", uuid, id
+            ) { rs -> if (rs.next()) rs.getInt(1) else null }
+
+            if (amount == null) {
+                error("更新後の在庫が取得できませんでした uuid=$uuid item_id=$id")
+            }
+
+            StockResult.Updated(amount)
         }
 
-        val amount = rs.getInt("amount")
-
-        rs.close()
-        mysql.close()
-
-        return amount
+        return when (result) {
+            is DbResult.Failure -> StockResult.Error(result.message)
+            is DbResult.Success -> result.value
+        }
     }
 
-    //アイテムバンクを作成 0:成功 2:失敗
-    private fun asyncCreateItemStorage(uuid: UUID,id:Int):EnumResult{
+    /**
+     * 在庫を絶対値で設定する。
+     *
+     * storage_log.edit_amount には「変動量」を残す。
+     * 旧実装は設定後の絶対値を入れていたため、SUM(edit_amount)が在庫と一致しなかった。
+     */
+    private fun asyncSetAmount(order: UUID?, uuid: UUID, id: Int, amount: Int): StockResult {
 
-        val data = getItemData(id) ?: return EnumResult.FAILED
+        val data = getItemData(id) ?: return StockResult.Error("未登録のアイテムです item_id=$id")
 
-        val p = Bukkit.getOfflinePlayer(uuid)
+        //ログを書くのに必要な変動量。コミット成功後に使う
+        var delta = 0
 
-        mysql.execute("INSERT INTO item_storage (player, uuid, item_id, item_key, amount, time) " +
-                "VALUES ('${p.name}', '${uuid}', ${id}, '${data.itemKey}', DEFAULT, DEFAULT);")
+        val result = db.transaction("在庫設定 uuid=$uuid item_id=$id amount=$amount") { con ->
 
-        if (asyncGetItemAmount(uuid,id) != -1) {
-            Log.storageLog(null,uuid,id,0,0,"CreateStorage")
-            return EnumResult.SUCCESSFUL
+            ensureStorageRow(con, uuid, id, data.itemKey)
+
+            // upsertが対象行の排他ロックを取っているため、この読み取りと更新の間に割り込まれない
+            val previous = con.executeQuery(
+                "SELECT amount FROM item_storage WHERE uuid = ? AND item_id = ?", uuid, id
+            ) { rs -> if (rs.next()) rs.getInt(1) else null }
+                ?: error("設定対象の倉庫が見つかりません uuid=$uuid item_id=$id")
+
+            val updated = con.executeUpdate(
+                "UPDATE item_storage SET amount = ?, time = now() WHERE uuid = ? AND item_id = ?",
+                amount, uuid, id
+            )
+
+            if (updated == 0) {
+                error("在庫の更新対象が存在しませんでした uuid=$uuid item_id=$id")
+            }
+
+            delta = amount - previous
+
+            StockResult.Updated(amount)
         }
 
-        return EnumResult.FAILED
+        val outcome = when (result) {
+            is DbResult.Failure -> StockResult.Error(result.message)
+            is DbResult.Success -> result.value
+        }
+
+        //ロールバックされた操作をログに残さないよう、コミット成功後にだけ書く
+        if (outcome is StockResult.Updated) {
+            Log.storageLog(order, uuid, id, delta, outcome.amount, "SetItem")
+        }
+
+        return outcome
     }
+
+    /** 在庫を取得する。行が無い場合は0(旧実装のように読むだけで行を作らない) */
+    private fun asyncGetAmount(uuid: UUID, id: Int): StockResult {
+
+        getItemData(id) ?: return StockResult.Error("未登録のアイテムです item_id=$id")
+
+        val result = db.query(
+            "SELECT amount FROM item_storage WHERE uuid = ? AND item_id = ?", uuid, id
+        ) { rs -> if (rs.next()) rs.getInt(1) else 0 }
+
+        return when (result) {
+            is DbResult.Failure -> StockResult.Error(result.message)
+            is DbResult.Success -> StockResult.Updated(result.value)
+        }
+    }
+
+    /** 減算と加算を同一トランザクションで行う */
+    private fun asyncTransfer(order: UUID?, from: UUID, to: UUID, id: Int, amount: Int): StockResult {
+
+        val data = getItemData(id) ?: return StockResult.Error("未登録のアイテムです item_id=$id")
+
+        if (amount <= 0) return StockResult.Error("送付する個数が不正です amount=$amount")
+        if (from == to) return StockResult.Error("送付元と送付先が同一です uuid=$from")
+
+        // 受け取り側の更新後の在庫。ログはコミット成功後に出すため、ここで受け取っておく
+        var receiverAmount = 0
+
+        val result = db.transaction("アイテム送付 from=$from to=$to item_id=$id amount=$amount") { con ->
+
+            // 同時に逆方向の送付が走った場合のデッドロックを避けるため、
+            // UUIDの順序でロックを取得する(upsertが対象行の排他ロックを取る)
+            listOf(from, to).sortedBy { it.toString() }
+                .forEach { ensureStorageRow(con, it, id, data.itemKey) }
+
+            // 受け取り側が上限を超える場合、減算前に中止する
+            val toAmount = con.executeQuery(
+                "SELECT amount FROM item_storage WHERE uuid = ? AND item_id = ?", to, id
+            ) { rs -> if (rs.next()) rs.getInt(1) else null }
+                ?: error("受け取り側の倉庫が見つかりません uuid=$to")
+
+            if (toAmount.toLong() + amount > MAX_AMOUNT) {
+                return@transaction StockResult.Insufficient
+            }
+
+            val taken = con.executeUpdate(
+                "UPDATE item_storage SET amount = amount - ?, time = now() " +
+                        "WHERE uuid = ? AND item_id = ? AND amount >= ?",
+                amount, from, id, amount
+            )
+
+            //在庫不足。この時点でまだ何も変更していない
+            if (taken == 0) return@transaction StockResult.Insufficient
+
+            val given = con.executeUpdate(
+                "UPDATE item_storage SET amount = amount + ?, time = now() " +
+                        "WHERE uuid = ? AND item_id = ? AND amount + ? <= ?",
+                amount, to, id, amount, MAX_AMOUNT
+            )
+
+            //ここで失敗したら例外を投げてロールバックさせる(片側だけ成立させない)
+            if (given == 0) {
+                error("受け取り側の在庫を更新できませんでした uuid=$to")
+            }
+
+            val rest = con.executeQuery(
+                "SELECT amount FROM item_storage WHERE uuid = ? AND item_id = ?", from, id
+            ) { rs -> if (rs.next()) rs.getInt(1) else null }
+                ?: error("送付元の在庫が取得できませんでした uuid=$from")
+
+            receiverAmount = toAmount + amount
+
+            StockResult.Updated(rest)
+        }
+
+        val outcome = when (result) {
+            is DbResult.Failure -> StockResult.Error(result.message)
+            is DbResult.Success -> result.value
+        }
+
+        // ロールバックされた送付をログに残さないよう、コミット成功後にだけ書く
+        if (outcome is StockResult.Updated) {
+            Log.storageLog(order, from, id, -amount, outcome.amount, "ItemPaySend")
+            Log.storageLog(order, to, id, amount, receiverAmount, "ItemPayReceive")
+        }
+
+        return outcome
+    }
+
+    ////////////////////////////////////////////////////////////
+    //      ItemIndex
+    ////////////////////////////////////////////////////////////
 
     //ItemIndexの読み込み
-    private fun asyncLoadItemIndex(){
+    private fun loadItemIndex(): Boolean {
 
         log("ItemIndexの読み込み")
 
-        itemIndex.clear()
+        val result = db.query(
+            "SELECT id, item_key, price, bid, ask, tick, base64 FROM item_index WHERE disabled = 0"
+        ) { rs ->
 
-        val index = ConcurrentHashMap<Int,ItemIndex>()
+            val index = ConcurrentHashMap<Int, ItemIndex>()
 
-        val rs = mysql.query("SELECT * FROM item_index where disabled=0;")?:return
+            while (rs.next()) {
 
-        while (rs.next()){
+                val data = ItemIndex()
 
-            val data = ItemIndex()
+                data.id = rs.getInt("id")
+                data.itemKey = rs.getString("item_key") ?: ""
+                data.price = rs.getDouble("price")
+                data.bid = rs.getDouble("bid")
+                data.ask = rs.getDouble("ask")
+                data.tick = rs.getDouble("tick")
 
-            data.id = rs.getInt("id")
-            data.itemKey = rs.getString("item_key")
-            data.price = rs.getDouble("price")
-            data.bid = rs.getDouble("bid")
-            data.ask = rs.getDouble("ask")
-            data.tick = rs.getDouble("tick")
+                //1件の破損データで全体の読み込みを失敗させない
+                data.item = runCatching { Utility.itemFromBase64(rs.getString("base64")) }.getOrNull()
 
-            data.item = Utility.itemFromBase64(rs.getString("base64"))
+                if (data.item == null) {
+                    log("ID:${data.id},Name:${data.itemKey} アイテムデータの取得に失敗！")
+                    continue
+                }
 
-            if (data.item == null){
-                log("ID:${data.id},Name:${data.itemKey} アイテムデータの取得に失敗！")
-                continue
+                index[data.id] = data
             }
-            log("ID:${data.id},Name:${data.itemKey} アイテムデータの取得に成功")
 
-            index[data.id] = data
+            index
         }
 
-        rs.close()
-        mysql.close()
+        return when (result) {
 
-        itemIndex = index
+            is DbResult.Failure -> {
+                // 旧実装は読み込み前にitemIndex.clear()していたため、失敗するとインデックスが空になり
+                // メニューやログ生成の data.item!! / getItemData(id)!! がNPEになっていた
+                plugin.logger.severe("ItemIndexの読み込みに失敗しました(既存のキャッシュを維持します): ${result.message}")
+                false
+            }
+
+            is DbResult.Success -> {
+                itemIndex = result.value
+                log("ItemIndexを読み込みました (${result.value.size}件)")
+                true
+            }
+        }
     }
 
-    private fun asyncSaveItemIndex(itemIndex: ItemIndex){
-        mysql.execute("UPDATE item_index SET price = ${itemIndex.price}, bid = ${itemIndex.bid}, ask = ${itemIndex.ask} WHERE id = ${itemIndex.id};")
+    private fun asyncSaveItemIndex(itemIndex: ItemIndex) {
+
+        val result = db.update(
+            "UPDATE item_index SET price = ?, bid = ?, ask = ? WHERE id = ?",
+            itemIndex.price, itemIndex.bid, itemIndex.ask, itemIndex.id
+        )
+
+        if (result is DbResult.Failure) {
+            plugin.logger.severe("価格の保存に失敗しました item_id=${itemIndex.id}")
+        }
     }
 
-    private fun runTransactionQueue(){
+    /**
+     * 原子的な在庫操作は item_storage(uuid, item_id) のUNIQUE制約が前提。
+     * 制約が無いまま動かすと重複行ができ、片方だけ更新される事故が起きるため起動時に確認する。
+     */
+    private fun verifySchema(): Boolean {
 
-        interruptTransactionQueue()
+        val result = db.query(
+            "SELECT COUNT(*) FROM (" +
+                    "  SELECT index_name FROM information_schema.statistics" +
+                    "  WHERE table_schema = DATABASE() AND table_name = 'item_storage' AND non_unique = 0" +
+                    "  GROUP BY index_name" +
+                    "  HAVING COUNT(*) = 2" +
+                    "     AND SUM(column_name = 'uuid') = 1" +
+                    "     AND SUM(column_name = 'item_id') = 1" +
+                    ") t"
+        ) { rs -> if (rs.next()) rs.getInt(1) else 0 }
 
-        transactionThread = Thread{ transaction() }
-        transactionThread.start()
+        val found = when (result) {
+            is DbResult.Failure -> {
+                plugin.logger.severe("スキーマの確認に失敗しました: ${result.message}")
+                return false
+            }
 
+            is DbResult.Success -> result.value
+        }
+
+        if (found >= 1) return true
+
+        plugin.logger.severe("item_storage に UNIQUE(uuid, item_id) がありません。")
+        plugin.logger.severe("新規導入の場合は jar内の db.sql でテーブルを作成してください。")
+        plugin.logger.severe("既存DBの場合は jar内の db_migration_1.sql を手順通りに実行してください。")
+        plugin.logger.severe("(重複行がある状態でUNIQUEを張るとエラーになるため、必ず重複統合から行うこと)")
+
+        return false
     }
 
-    private fun interruptTransactionQueue(){
-
-        if (transactionThread.isAlive)
-            transactionThread.interrupt()
-
-    }
-
-    private fun transaction(){
+    private fun transaction() {
 
         log("トランザクションキュー起動")
 
-        mysql = MySQLManager(Man10ItemBank.plugin,"Man10ItemBankTransaction")
+        while (true) {
 
-        while (true){
+            val job = try {
+                transactionQueue.take()
+            } catch (e: InterruptedException) {
+                break
+            }
+
+            if (job === poison) break
 
             try {
-                val queue = transactionQueue.take()
-
-                queue.invoke()
-
-            }catch (e:InterruptedException){
-              log("トランザクションの停止")
-              break
-            } catch (e:Exception){
-                log("トランザクションキューのエラー:${e.stackTrace}")
-
+                job.invoke()
+            } catch (e: Throwable) {
+                // 旧実装は ${e.stackTrace} で配列のtoStringを出力しており原因が追えなかった。
+                // またErrorを捕まえないためStackOverflowError等でスレッドごと死んでいた
+                plugin.logger.log(Level.SEVERE, "在庫処理でエラーが発生しました", e)
             }
         }
+
+        log("トランザクションキュー停止")
     }
 
-    class ItemIndex{
+    class ItemIndex {
 
-        var id : Int = 0
-        var itemKey : String = ""//識別名
-        var price : Double = 0.0
-        var bid : Double = 0.0
-        var ask : Double = 0.0
-        var tick : Double = 0.0
-        var item : ItemStack? = null
+        var id: Int = 0
+        var itemKey: String = ""//識別名
+        var price: Double = 0.0
+        var bid: Double = 0.0
+        var ask: Double = 0.0
+        var tick: Double = 0.0
+        var item: ItemStack? = null
     }
 
-    enum class EnumResult{
+    enum class EnumResult {
         SUCCESSFUL,
         FAILED,
-
     }
-
-
-
 }
