@@ -3,6 +3,7 @@ package red.man10.man10itembank
 import org.bukkit.plugin.java.JavaPlugin
 import red.man10.man10itembank.menu.MenuFramework
 import red.man10.man10itembank.util.Database
+import red.man10.man10itembank.util.Migration
 import java.util.UUID
 
 class Man10ItemBank : JavaPlugin() {
@@ -31,6 +32,14 @@ class Man10ItemBank : JavaPlugin() {
         }
 
         database = db
+
+        // UNIQUE(uuid, item_id) が無いと原子的な在庫操作が成立しないため、
+        // 移行が完了するまで起動させない
+        if (!Migration.run(db, logger, config.getBoolean("mysql.autoMigrate", true))) {
+            logger.severe("スキーマ移行が完了していないためMan10ItemBankを無効化します")
+            server.pluginManager.disablePlugin(this)
+            return
+        }
 
         Log.start(this, db)
 

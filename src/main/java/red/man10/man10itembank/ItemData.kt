@@ -60,15 +60,15 @@ object ItemData {
     private var transactionThread: Thread? = null
 
     /**
-     * 起動処理。スキーマ検査とItemIndexの読み込みに失敗した場合はfalseを返す。
+     * 起動処理。ItemIndexの読み込みに失敗した場合はfalseを返す。
      * (インデックスが空のまま動くと各所の data.item!! がNPEになるため、起動を止める)
+     *
+     * スキーマの移行はこれより前に Migration.run で完了している前提。
      */
     fun start(plugin: JavaPlugin, database: Database): Boolean {
 
         this.plugin = plugin
         this.db = database
-
-        if (!verifySchema()) return false
 
         if (!loadItemIndex()) return false
 
@@ -672,42 +672,6 @@ object ItemData {
         if (result is DbResult.Failure) {
             plugin.logger.severe("価格の保存に失敗しました item_id=${itemIndex.id}")
         }
-    }
-
-    /**
-     * 原子的な在庫操作は item_storage(uuid, item_id) のUNIQUE制約が前提。
-     * 制約が無いまま動かすと重複行ができ、片方だけ更新される事故が起きるため起動時に確認する。
-     */
-    private fun verifySchema(): Boolean {
-
-        val result = db.query(
-            "SELECT COUNT(*) FROM (" +
-                    "  SELECT index_name FROM information_schema.statistics" +
-                    "  WHERE table_schema = DATABASE() AND table_name = 'item_storage' AND non_unique = 0" +
-                    "  GROUP BY index_name" +
-                    "  HAVING COUNT(*) = 2" +
-                    "     AND SUM(column_name = 'uuid') = 1" +
-                    "     AND SUM(column_name = 'item_id') = 1" +
-                    ") t"
-        ) { rs -> if (rs.next()) rs.getInt(1) else 0 }
-
-        val found = when (result) {
-            is DbResult.Failure -> {
-                plugin.logger.severe("スキーマの確認に失敗しました: ${result.message}")
-                return false
-            }
-
-            is DbResult.Success -> result.value
-        }
-
-        if (found >= 1) return true
-
-        plugin.logger.severe("item_storage に UNIQUE(uuid, item_id) がありません。")
-        plugin.logger.severe("新規導入の場合は jar内の db.sql でテーブルを作成してください。")
-        plugin.logger.severe("既存DBの場合は jar内の db_migration_1.sql を手順通りに実行してください。")
-        plugin.logger.severe("(重複行がある状態でUNIQUEを張るとエラーになるため、必ず重複統合から行うこと)")
-
-        return false
     }
 
     private fun transaction() {
