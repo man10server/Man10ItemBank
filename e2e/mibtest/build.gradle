@@ -1,0 +1,44 @@
+plugins {
+    id 'java'
+    id 'org.jetbrains.kotlin.jvm' version '2.1.0'
+}
+
+group = 'red.man10'
+version = '1.0'
+
+repositories {
+    mavenCentral()
+    maven { url 'https://repo.papermc.io/repository/maven-public/' }
+}
+
+dependencies {
+    compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+    // 検証対象。e2e実行前に ../../gradlew build で作られている前提
+    compileOnly files('../../build/libs/Man10ItemBank-1.0.jar')
+    implementation "org.jetbrains.kotlin:kotlin-stdlib"
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+
+kotlin {
+    jvmToolchain(21)
+}
+
+/*
+ * kotlin-stdlib を同梱する。
+ *
+ * Man10ItemBank のjarにはKotlinランタイムが入っておらず、実サーバーでは
+ * Man10CommonLibs などが供給しているクラスを共有して動いている。
+ * e2eでも同じ構造を再現するため、この検証プラグインが供給側になる。
+ * (plugin.yml の loadbefore で Man10ItemBank より先に読ませる)
+ */
+jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA'
+    exclude 'META-INF/versions/9/module-info.class', 'module-info.class'
+}

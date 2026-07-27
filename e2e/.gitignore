@@ -1,0 +1,6 @@
+# run.sh が作るサーバーのデータ(Paper本体・ワールド・ログ・libraries)
+data/
+
+# 検証プラグインのビルド成果物
+mibtest/build/
+mibtest/.gradle/

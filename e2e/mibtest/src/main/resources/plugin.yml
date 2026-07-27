@@ -1,0 +1,18 @@
+name: MibTest
+version: '1.0'
+main: red.man10.mibtest.MibTest
+api-version: 1.21
+
+# Man10ItemBank より先に読み込ませる。
+# depend にすると読み込み順が逆になり、Man10ItemBank が起動する時点で
+# このjarが供給する kotlin-stdlib を参照できない。
+loadbefore:
+  - Man10ItemBank
+
+# 検証結果の照合用にDBを直接読む
+libraries:
+  - com.mysql:mysql-connector-j:8.4.0
+
+commands:
+  mibtest:
+    default: op
