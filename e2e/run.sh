@@ -152,11 +152,25 @@ else
 fi
 
 # plugin.yml の libraries: が実際に解決できたか (PRの未検証事項)
-if grep -qE 'mysql-connector-j|HikariCP' <<<"$LOGS" || \
-   { [ -d data/libraries ] && find data/libraries -name '*mysql-connector-j*' | grep -q .; }; then
-    ok "libraries: の依存が解決された"
+if grep -q 'HikariCP' <<<"$LOGS"; then
+    ok "libraries: の HikariCP が解決された"
 else
     ng "libraries: の解決を確認できませんでした"
+fi
+
+# JDBCドライバはPaper同梱のものが使われる。
+# libraries: に書いてもLibraryLoaderの親がサーバーなので効かず、
+# ダウンロードされるだけの無駄になる。再び宣言されたらここで気づける。
+# (Maven解決で降ってきた場合だけ .pom が並ぶので、それを目印にする)
+if find data/libraries/com/mysql -name 'mysql-connector-j-*.pom' 2>/dev/null | grep -q .; then
+    ng "mysql-connector-j が libraries: で取得されています(Paper同梱のものが使われるため不要)"
+    find data/libraries/com/mysql -name 'mysql-connector-j-*.pom' | sed 's/^/       /'
+else
+    ok "JDBCドライバはPaper同梱のものだけを使っている"
+fi
+
+if [ -d data/libraries/com/mysql ]; then
+    info "Paper同梱のドライバ: $(find data/libraries/com/mysql -name '*.jar' -exec basename {} \; | tr '\n' ' ')"
 fi
 
 if grep -q 'NoClassDefFoundError\|ClassNotFoundException' <<<"$LOGS"; then

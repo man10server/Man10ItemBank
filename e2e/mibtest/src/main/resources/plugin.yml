@@ -9,9 +9,8 @@ api-version: 1.21
 loadbefore:
   - Man10ItemBank
 
-# 検証結果の照合用にDBを直接読む
-libraries:
-  - com.mysql:mysql-connector-j:8.4.0
+# 検証結果の照合用にDBを直接読むが、JDBCドライバはPaperが同梱しているため宣言しない
+# (宣言してもLibraryLoaderの親がサーバーなので、親優先委譲でサーバー側が使われる)
 
 commands:
   mibtest:

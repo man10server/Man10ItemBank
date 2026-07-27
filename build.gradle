@@ -31,7 +31,8 @@ dependencies {
     // 実行時にしか入らない依存(HikariCP/ドライバ)はテストでは実体が要るため testImplementation で入れる。
     testImplementation 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
     testImplementation 'com.zaxxer:HikariCP:5.1.0'
-    testImplementation 'com.mysql:mysql-connector-j:8.4.0'
+    // Paperが同梱している版に合わせる(1.21.8では9.2.0)。実行時はサーバー側のものが使われる
+    testImplementation 'com.mysql:mysql-connector-j:9.2.0'
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
     // 1.20系の同梱docker-javaはAPI 1.32で交渉するため、Docker Engine 29系(最低API 1.40)に繋がらない
