@@ -3,4 +3,74 @@ mysql:
   db:
   user:
   pass:
-  port:
+  port: 3306
+
+  # trueにするとTLSを必須にする(sslMode=REQUIRED)
+  # falseの場合、認証情報とアイテムデータが平文で流れるため、DBが別ホストなら有効化を推奨
+  useSsl: false
+  # useSsl: false かつ caching_sha2_password を使う場合に必要
+  allowPublicKeyRetrieval: true
+
+  # デッドロック(1213)/ロック待ちタイムアウト(1205)時の再試行回数(0-5)
+  # ロールバックが保証されるエラーのみ再試行するため、二重適用は起きない。
+  # コネクションの取得失敗は再試行しない(HikariCPが connectionTimeoutMs の間
+  # 接続確立を試み続けるため、外側で繰り返しても同じ待ちが重なるだけ)
+  maxRetry: 2
+
+  # DBが落ちている間の扱い。
+  #
+  # 在庫処理は単一スレッドで動くため、キューに積まれた操作がそれぞれ接続を
+  # 試みると1件ごとに connectionTimeoutMs 分ブロックし、流入が排出を上回った
+  # 時点でキューが際限なく伸びる。
+  # 一度落ちていると分かったら以降は接続を試みずに即座に失敗させ、
+  # 一定間隔で1件だけ通して復帰を確かめる。
+  #
+  # 失敗は安全側(現物を渡さない・返却する)に倒れるため、
+  # 誤って作動してもアイテムは壊れない。
+  circuitBreaker:
+    # 何回続けて接続に失敗したら即時失敗へ切り替えるか
+    failureThreshold: 3
+    # 即時失敗中に、復帰を確かめるため1件だけ通す間隔
+    probeIntervalMs: 1000
+
+  # 起動時にスキーマを自動で整える。
+  #   1. db.sql が定義するテーブルのうち、無いものだけを作成する(既存のテーブルには触らない)
+  #   2. item_storage のスキーマ移行(重複行の統合とUNIQUE制約の付与)
+  # 各手順は実行前に必要性を確認するため、何度起動しても結果は変わらない。
+  # falseにした場合は確認のみ行い、対応が必要なら db.sql / db_migration_1.sql の
+  # 手動実行を促して起動を中止する。
+  autoMigrate: true
+
+  pool:
+    # 在庫処理スレッド + ログスレッド + 余裕
+    maximumPoolSize: 6
+    minimumIdle: 1
+
+    # プールからコネクションを借りる待ちの上限。
+    # DBが停止している間は「この時間 × (maxRetry + 1)」が1操作あたりの待ち時間になる。
+    # 在庫処理は単一スレッドなので、長くするとキュー全体が詰まる
+    connectionTimeoutMs: 1000
+
+    # TCP接続確立の上限。DBが別ホストで遅延がある場合は伸ばす
+    connectTimeoutMs: 1000
+
+    # 応答待ちの上限。0にすると接続が黙って切れた際に永久にブロックするので0にしないこと。
+    #
+    # 短くしすぎないこと。応答待ちが切れると「サーバー側で文が実行中かどうか分からない」
+    # 状態になり、ロールバックが保証される 1205(ロック待ちタイムアウト)と違って
+    # 再試行も成否の判断もできなくなる。
+    # なお行ロックの待ち時間(innodb_lock_wait_timeout)はこの値から自動的に導出し、
+    # 必ずこれより先に 1205 が返るようにしている
+    socketTimeoutMs: 3000
+
+    # 起動時のスキーマ移行だけに使う応答待ちの上限(0で無制限)。
+    # ALTER TABLE や全件の重複統合はテーブルが大きいと上のsocketTimeoutを超えるため、
+    # プールとは別の専用コネクションでこの値を使う
+    startupSocketTimeoutMs: 600000
+
+    idleTimeoutMs: 300000
+    maxLifetimeMs: 1200000
+    # connectionTimeoutMs より小さい必要がある(超える場合は自動的に切り詰める)
+    validationTimeoutMs: 1000
+    # この時間returnされないコネクションを警告する(0で無効)
+    leakDetectionThresholdMs: 30000

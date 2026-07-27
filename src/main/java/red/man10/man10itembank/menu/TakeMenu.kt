@@ -7,6 +7,7 @@ import org.bukkit.event.inventory.InventoryAction
 import red.man10.man10itembank.ItemData
 import red.man10.man10itembank.Log
 import red.man10.man10itembank.Man10ItemBank
+import red.man10.man10itembank.StockResult
 import red.man10.man10itembank.util.Utility
 
 class TakeMenu(p:Player,private val page : Int) : MenuFramework(p,54,"アイテムを取り出す"){
@@ -101,31 +102,81 @@ class TakeMenu(p:Player,private val page : Int) : MenuFramework(p,54,"アイテ�
 
     private fun takeItemFromItemStorage(p:Player, id:Int, amount:Int){
 
-        ItemData.takeItemAmount(p.uniqueId,p.uniqueId,id,amount){
-            if (it==null){
-                Utility.sendError(p,"在庫ないので取り出すことができません")
-                return@takeItemAmount
-            }
+        ItemData.changeItemAmount(p.uniqueId,p.uniqueId,id,-amount,"TakeItem"){ result ->
 
-            Bukkit.getScheduler().runTask(Man10ItemBank.plugin, Runnable {
-                if (p.inventory.firstEmpty()==-1){
-                    Utility.sendError(p,"インベントリがいっぱいなので取り出すことができません")
-                    Log.storageLog(p.uniqueId,p.uniqueId,id,0,0,"FailedTakingItem(FullOfInventory)")
-                    ItemData.addItemAmount(p.uniqueId,p.uniqueId,id,amount)
-                    return@Runnable
+            when(result){
+
+                is StockResult.Insufficient ->
+                    Utility.sendError(p,"在庫ないので取り出すことができません")
+
+                //DB障害。減算できていないので現物を渡してはいけない
+                is StockResult.Error ->
+                    Utility.sendError(p,"DBエラーのため取り出せませんでした。時間をおいて試してください")
+
+                is StockResult.Updated -> {
+
+                    val data = ItemData.getItemData(id)
+
+                    if (data?.item == null){
+                        returnToBank(p,id,amount,"NoItemData")
+                        return@changeItemAmount
+                    }
+
+                    dispatch(Man10ItemBank.plugin){ giveItem(p,data,id,amount,result.amount) }
                 }
+            }
+        }
+    }
 
-                val data = ItemData.getItemData(id)!!
-                Utility.sendMsg(p,"${amount}個取り出しました(現在の在庫:${Utility.format(it)})")
+    //メインスレッドで実行する
+    private fun giveItem(p:Player, data:ItemData.ItemIndex, id:Int, amount:Int, stock:Int){
 
-                val clone = data.item!!.clone()
-
-                clone.amount = amount
-                p.inventory.addItem(clone)
-            })
+        if (!p.isOnline){
+            returnToBank(p,id,amount,"Offline")
+            return
         }
 
+        val template = data.item!!
+        val max = template.maxStackSize.coerceAtLeast(1)
 
+        var rest = amount
+        var failed = 0
+
+        while (rest > 0){
+
+            val stack = template.clone()
+            stack.amount = minOf(rest,max)
+            rest -= stack.amount
+
+            //旧実装はaddItemの戻り値(入り切らなかった分)を捨てており、そのまま消えていた
+            p.inventory.addItem(stack).values.forEach { failed += it.amount }
+        }
+
+        if (failed > 0){
+            Utility.sendError(p,"インベントリがいっぱいなので${Utility.format(failed)}個は取り出せませんでした")
+            returnToBank(p,id,failed,"FullOfInventory")
+        }
+
+        val given = amount - failed
+
+        if (given > 0){
+            Utility.sendMsg(p,"${Utility.format(given)}個取り出しました(現在の在庫:${Utility.format(stock+failed)})")
+        }
+    }
+
+    //渡せなかった分を倉庫へ戻す
+    private fun returnToBank(p:Player, id:Int, amount:Int, reason:String){
+
+        //在庫は動かない記録用の行。storage_amountは不明なのでnull(0を入れると集計が壊れる)
+        Log.storageLog(p.uniqueId,p.uniqueId,id,0,null,"FailedTakingItem($reason)")
+
+        ItemData.changeItemAmount(p.uniqueId,p.uniqueId,id,amount,"ReturnItem"){ result ->
+            if (result !is StockResult.Updated){
+                Man10ItemBank.plugin.logger.severe(
+                    "取り出せなかった分を倉庫へ戻せませんでした " +
+                            "player=${p.name} uuid=${p.uniqueId} item_id=$id amount=$amount reason=$reason")
+            }
+        }
     }
 
 }

@@ -1,0 +1,10 @@
+mysql:
+  host: mysql
+  port: 3306
+  db: itembank
+  user: itembank
+  pass: itembank
+
+item:
+  # 検証に使うアイテムの識別名。mibtest seed で item_index へ登録される
+  key: e2e_diamond

@@ -30,7 +30,10 @@ create table item_storage
 		primary key (id)
 );
 
-create index item_storage_uuid_item_id_index
+-- 原子的な在庫操作(INSERT ... ON DUPLICATE KEY UPDATE / UPDATE amount = amount + ?)の前提。
+-- 重複行があると片方だけ更新される事故が起きるためUNIQUEにする。
+-- 既存DBは db_migration_1.sql で移行すること。
+create unique index item_storage_uuid_item_id_uindex
 	on item_storage (uuid, item_id);
 
 create table storage_log
@@ -45,7 +48,7 @@ create table storage_log
 	action varchar(64) null,
 	edit_amount int null comment '操作をした量',
 	storage_amount int null comment '編集後の倉庫の量',
-	world varchar(16) null,
+	world varchar(64) null,
 	x double null,
 	y double null,
 	z double null,
@@ -53,6 +56,12 @@ create table storage_log
 	constraint storage_log_pk
 		primary key (id)
 );
+
+create index storage_log_target_uuid_time_index
+	on storage_log (target_uuid, time);
+
+create index storage_log_item_id_time_index
+	on storage_log (item_id, time);
 
 create table system_log
 (

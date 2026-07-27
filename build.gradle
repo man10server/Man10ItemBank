@@ -22,6 +22,41 @@ repositories {
 dependencies {
     compileOnly 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
     implementation "org.jetbrains.kotlin:kotlin-stdlib"
+
+    // plugin.yml の libraries: で実行時に読み込まれるためcompileOnly
+    compileOnly 'com.zaxxer:HikariCP:5.1.0'
+
+    // ---- テスト ----
+    // Database / Migration を実MySQL(Testcontainers)に対して検証する。
+    // 実行時にしか入らない依存(HikariCP/ドライバ)はテストでは実体が要るため testImplementation で入れる。
+    testImplementation 'io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT'
+    testImplementation 'com.zaxxer:HikariCP:5.1.0'
+    // Paperが同梱している版に合わせる(1.21.8では9.2.0)。実行時はサーバー側のものが使われる
+    testImplementation 'com.mysql:mysql-connector-j:9.2.0'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    // 1.20系の同梱docker-javaはAPI 1.32で交渉するため、Docker Engine 29系(最低API 1.40)に繋がらない
+    testImplementation 'org.testcontainers:mysql:1.21.3'
+    testImplementation 'org.testcontainers:junit-jupiter:1.21.3'
+    // JavaPlugin は PluginClassLoader 以外からの生成を拒否するため、継承ではなくモックで用意する
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // Testcontainers はSLF4J経由でログを出す。バインディングが無いと失敗理由が見えない
+    testRuntimeOnly 'org.slf4j:slf4j-simple:2.0.16'
+}
+
+test {
+    useJUnitPlatform()
+    // Mockito(inline mock maker)の self-attach 警告を抑える
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+    // docker-javaは既定でAPI 1.32を提示するが、Docker Engine 29系は1.40未満を拒否する
+    systemProperty 'api.version', '1.44'
+    environment 'DOCKER_API_VERSION', '1.44'
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
 }
 
 def targetJavaVersion = 21

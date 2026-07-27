@@ -1,0 +1,26 @@
+mysql:
+  host: mysql
+  db: itembank
+  user: itembank
+  pass: itembank
+  port: 3306
+
+  useSsl: false
+  allowPublicKeyRetrieval: true
+
+  maxRetry: 2
+
+  # 移行前のスキーマから起動するので、自動移行を効かせる
+  autoMigrate: true
+
+  pool:
+    maximumPoolSize: 6
+    minimumIdle: 1
+    connectionTimeoutMs: 1000
+    connectTimeoutMs: 1000
+    socketTimeoutMs: 3000
+    startupSocketTimeoutMs: 600000
+    idleTimeoutMs: 300000
+    maxLifetimeMs: 1200000
+    validationTimeoutMs: 1000
+    leakDetectionThresholdMs: 30000

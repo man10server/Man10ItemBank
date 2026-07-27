@@ -3,6 +3,20 @@ version: '1.0'
 main: red.man10.man10itembank.Man10ItemBank
 api-version: 1.21
 
+# 起動時にMaven Centralから取得する。初回のみ外部通信が必要。
+#
+# mysql-connector-j はここに書かない。
+# Paper が libraries.list で自前の Connector/J を持っており(1.21.8 では 9.2.0)、
+# LibraryLoader の親がサーバーのクラスローダなので、ここに何を書いても
+# 親優先委譲でサーバー側が使われる。宣言してもダウンロードされるだけで効かない。
+#
+# そのため使用するドライバのバージョンはPaper側で決まる。
+# Connector/J 9系は MySQL 5.7 のサポートを打ち切っているため MySQL 8.0以上が必要。
+# 旧実装が使っていた com.mysql.jdbc.Driver は Connector/J 8.0 で削除済みのクラス名なので、
+# com.mysql.cj.jdbc.Driver を指定すること(Database.DRIVER_CLASS)。
+libraries:
+  - com.zaxxer:HikariCP:5.1.0
+
 commands:
   mib:
     default: op
