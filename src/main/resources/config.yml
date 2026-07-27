@@ -27,12 +27,32 @@ mysql:
     # 在庫処理スレッド + ログスレッド + 余裕
     maximumPoolSize: 6
     minimumIdle: 1
-    # 接続確立の待ち時間
-    connectionTimeoutMs: 5000
-    # 応答待ちの上限。0にすると接続が黙って切れた際に永久にブロックするので0にしないこと
-    socketTimeoutMs: 15000
+
+    # プールからコネクションを借りる待ちの上限。
+    # DBが停止している間は「この時間 × (maxRetry + 1)」が1操作あたりの待ち時間になる。
+    # 在庫処理は単一スレッドなので、長くするとキュー全体が詰まる
+    connectionTimeoutMs: 1000
+
+    # TCP接続確立の上限。DBが別ホストで遅延がある場合は伸ばす
+    connectTimeoutMs: 1000
+
+    # 応答待ちの上限。0にすると接続が黙って切れた際に永久にブロックするので0にしないこと。
+    #
+    # 短くしすぎないこと。応答待ちが切れると「サーバー側で文が実行中かどうか分からない」
+    # 状態になり、ロールバックが保証される 1205(ロック待ちタイムアウト)と違って
+    # 再試行も成否の判断もできなくなる。
+    # なお行ロックの待ち時間(innodb_lock_wait_timeout)はこの値から自動的に導出し、
+    # 必ずこれより先に 1205 が返るようにしている
+    socketTimeoutMs: 3000
+
+    # 起動時のスキーマ移行だけに使う応答待ちの上限(0で無制限)。
+    # ALTER TABLE や全件の重複統合はテーブルが大きいと上のsocketTimeoutを超えるため、
+    # プールとは別の専用コネクションでこの値を使う
+    startupSocketTimeoutMs: 600000
+
     idleTimeoutMs: 300000
     maxLifetimeMs: 1200000
-    validationTimeoutMs: 3000
+    # connectionTimeoutMs より小さい必要がある(超える場合は自動的に切り詰める)
+    validationTimeoutMs: 1000
     # この時間returnされないコネクションを警告する(0で無効)
     leakDetectionThresholdMs: 30000

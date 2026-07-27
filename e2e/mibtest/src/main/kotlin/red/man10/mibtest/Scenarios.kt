@@ -54,12 +54,17 @@ class Scenarios(private val plugin: MibTest, private val db: Db) {
     //      シナリオ
     ////////////////////////////////////////////////////////////
 
-    /** 倉庫行の作成と相対更新 */
+    /**
+     * 倉庫行の作成と相対更新。
+     *
+     * シナリオ同士が状態を共有すると、1つ失敗しただけで後続が連鎖して落ち、
+     * 本当の原因が分からなくなる。各シナリオは自分でUUIDと初期在庫を用意する。
+     */
     private fun stockBasics(itemId: Int) {
 
-        val uuid = UUID.randomUUID()
-
         scenario("upsert_creates_row_once") {
+
+            val uuid = UUID.randomUUID()
 
             expect("初回追加", StockResult.Updated(100), change(uuid, itemId, 100))
             expect("行数", 1, db.storageRowCount(uuid.toString(), itemId))
@@ -71,18 +76,23 @@ class Scenarios(private val plugin: MibTest, private val db: Db) {
         }
 
         scenario("take_reduces_stock") {
+
+            val uuid = UUID.randomUUID()
+            expect("準備", StockResult.Updated(150), change(uuid, itemId, 150))
+
             expect("取り出し", StockResult.Updated(120), change(uuid, itemId, -30))
             expect("DB上の在庫", 120, db.stock(uuid.toString(), itemId))
         }
 
         scenario("insufficient_leaves_db_untouched") {
 
-            val before = db.stock(uuid.toString(), itemId)
+            val uuid = UUID.randomUUID()
+            expect("準備", StockResult.Updated(120), change(uuid, itemId, 120))
 
-            val result = change(uuid, itemId, -(before + 1))
+            val result = change(uuid, itemId, -121)
 
             expect("在庫不足の判定", StockResult.Insufficient, result)
-            expect("在庫は変化しない", before, db.stock(uuid.toString(), itemId))
+            expect("在庫は変化しない", 120, db.stock(uuid.toString(), itemId))
         }
 
         scenario("overflow_is_rejected") {

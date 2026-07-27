@@ -244,6 +244,63 @@ class DatabaseTest {
         assertTrue(db.update("UPDATE counter SET value = value + 1 WHERE id = 1") is DbResult.Success)
     }
 
+    ////////////////////////////////
+    //      タイムアウトの取り決め
+    ////////////////////////////////
+
+    @Test
+    @DisplayName("行ロックの待ち時間はsocketTimeoutより短く設定される")
+    fun lockWaitIsShorterThanSocketTimeout() {
+
+        //socketTimeoutが先に切れると「サーバー側で文が実行中か分からない」状態になり、
+        //ロールバックが保証される1205と違って再試行も成否の判断もできなくなる
+        val (db, _) = database { set("mysql.pool.socketTimeoutMs", 3_000) }
+        db.connect()
+
+        val lockWait = db.query("SELECT @@SESSION.innodb_lock_wait_timeout") { rs ->
+            if (rs.next()) rs.getInt(1) else -1
+        }
+
+        assertEquals(2, (lockWait as DbResult.Success).value)
+    }
+
+    @Test
+    @DisplayName("socketTimeoutを変えるとロック待ちも追随する")
+    fun lockWaitFollowsSocketTimeout() {
+
+        val (db, _) = database { set("mysql.pool.socketTimeoutMs", 8_000) }
+        db.connect()
+
+        val lockWait = db.query("SELECT @@SESSION.innodb_lock_wait_timeout") { rs ->
+            if (rs.next()) rs.getInt(1) else -1
+        }
+
+        assertEquals(7, (lockWait as DbResult.Success).value)
+    }
+
+    @Test
+    @DisplayName("起動用コネクションは長い応答待ちを使う")
+    fun startupConnectionUsesLongTimeout() {
+
+        //移行のALTERは通常のsocketTimeoutを超えうるため、専用コネクションが別設定を持つ
+        val (db, _) = database {
+            set("mysql.pool.socketTimeoutMs", 3_000)
+            set("mysql.pool.startupSocketTimeoutMs", 600_000)
+        }
+        db.connect()
+
+        //通常のプールでは3秒で切れる待ち時間を、起動用コネクションでは越えられる
+        val result = db.withStartupConnection("sleep") { con ->
+            con.executeQuery("SELECT SLEEP(4)") { rs -> rs.next() }
+        }
+
+        assertTrue(result is DbResult.Success, "起動用コネクションが4秒の応答を待てませんでした: $result")
+
+        val timedOut = db.query("SELECT SLEEP(4)") { rs -> rs.next() }
+
+        assertTrue(timedOut is DbResult.Failure, "通常のプールが3秒を超えて待ってしまいました")
+    }
+
     private fun currentValue(): Int =
         MySqlSupport.queryOne(schema, "SELECT value FROM counter WHERE id = 1") { it.getInt(1) }
 }

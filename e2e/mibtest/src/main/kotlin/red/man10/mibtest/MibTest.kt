@@ -59,6 +59,8 @@ class MibTest : JavaPlugin(), CommandExecutor {
 
             "run" -> run(sender)
 
+            "ping" -> ping(sender)
+
             "status" -> sender.sendMessage(
                 "itemQueue=${ItemData.getQueueSize()} " +
                         "logQueue=${red.man10.man10itembank.Log.queueSize()} " +
@@ -68,11 +70,36 @@ class MibTest : JavaPlugin(), CommandExecutor {
             else -> {
                 sender.sendMessage("/mibtest seed   : 検証用アイテムを item_index へ登録する(要サーバー再起動)")
                 sender.sendMessage("/mibtest run    : 在庫操作の検証を実行する")
+                sender.sendMessage("/mibtest ping   : プラグインのプール経由でDBへ到達できるか確かめる")
                 sender.sendMessage("/mibtest status : キューの状態を表示する")
             }
         }
 
         return true
+    }
+
+    /**
+     * プラグイン自身のコネクションプール経由でDBに到達できるかを見る。
+     *
+     * MySQLが復帰していても、JVMがホスト名の解決失敗を数秒キャッシュしているため
+     * すぐには繋がらないことがある。検証の開始前にこれで待てるようにしておく。
+     */
+    private fun ping(sender: CommandSender) {
+
+        val itemKey = config.getString("item.key") ?: "e2e_diamond"
+        val itemId = ItemData.getID(itemKey)
+
+        if (itemId == -1) {
+            logger.warning("PING ng (item_key=$itemKey が未読み込み)")
+            return
+        }
+
+        ItemData.getItemAmount(java.util.UUID.randomUUID(), itemId) { amount ->
+            //getItemAmount は失敗時に -1 を返す
+            if (amount >= 0) logger.info("PING ok") else logger.warning("PING ng")
+        }
+
+        sender.sendMessage("ping を投げました")
     }
 
     ////////////////////////////////

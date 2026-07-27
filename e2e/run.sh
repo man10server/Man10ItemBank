@@ -282,7 +282,95 @@ else
 fi
 
 ########################################
-# 8. 停止時のドレイン
+# 8. DB停止中の挙動と応答時間
+########################################
+step "DB停止中の挙動"
+
+$COMPOSE stop mysql >/dev/null 2>&1
+
+OUTAGE_START=$SECONDS
+$RCON mibtest run >/dev/null 2>&1
+
+for _ in $(seq 1 60); do
+    paper_logs | grep -q 'RESULT pass=' && break
+    sleep 2
+done
+
+OUTAGE_LOGS=$(paper_logs)
+
+if grep -qE 'コネクション取得に失敗' <<<"$OUTAGE_LOGS"; then
+    ok "DB断を検出してエラーとして扱った"
+    # 1操作あたりの待ち時間 = connectionTimeoutMs × (maxRetry + 1) ≒ 3秒
+    FIRST_FAIL=$(grep -m1 -oE 'コネクション取得に失敗 \(計[0-9]+回試行\)' <<<"$OUTAGE_LOGS")
+    info "${FIRST_FAIL:-}"
+else
+    ng "DB断のエラーログがありません"
+fi
+
+# 原因が埋もれず、スタックトレースが操作ごとに繰り返されないこと
+if grep -qE 'コネクション取得に失敗 .*(UnknownHostException|CommunicationsException|ConnectException|SQLTransientConnectionException)' <<<"$OUTAGE_LOGS"; then
+    ok "根本原因をログの1行目に出している"
+else
+    ng "根本原因が要約されていません"
+fi
+
+TRACE_COUNT=$(grep -c 'com.mysql.cj.exceptions.ExceptionFactory.createException' <<<"$OUTAGE_LOGS" || true)
+if [ "$TRACE_COUNT" -le 6 ]; then
+    ok "スタックトレースの繰り返しが抑制されている (${TRACE_COUNT}回)"
+else
+    ng "スタックトレースが繰り返し出ています (${TRACE_COUNT}回)"
+fi
+
+if $COMPOSE ps --status running --format '{{.Service}}' 2>/dev/null | grep -qx paper; then
+    ok "DB断でもサーバーは動き続けている"
+else
+    ng "DB断でサーバーが停止しました"
+fi
+
+$COMPOSE start mysql >/dev/null 2>&1
+for _ in $(seq 1 40); do
+    $MYSQL -e "SELECT 1" >/dev/null 2>&1 && break
+    sleep 2
+done
+
+# MySQLが起きていても、JVMはホスト名の解決失敗を数秒キャッシュしている
+# (networkaddress.cache.negative.ttl 既定10秒)。
+# プラグイン自身のプール経由で到達できるまで待つ
+PING_MARK=$(paper_logs | grep -c 'PING ok' || true)
+RECOVERED=0
+
+for _ in $(seq 1 30); do
+    $RCON mibtest ping >/dev/null 2>&1
+    sleep 2
+    if [ "$(paper_logs | grep -c 'PING ok' || true)" -gt "$PING_MARK" ]; then
+        RECOVERED=1
+        break
+    fi
+done
+
+if [ "$RECOVERED" -eq 1 ]; then
+    ok "DB復帰をプラグイン側から確認した"
+else
+    ng "DB復帰後もプラグインからDBへ到達できませんでした"
+fi
+
+rm -f data/mibtest-result.txt
+$RCON mibtest run >/dev/null 2>&1
+
+for _ in $(seq 1 120); do
+    [ -f data/mibtest-result.txt ] && grep -q 'RESULT' data/mibtest-result.txt && break
+    sleep 2
+done
+
+if [ -f data/mibtest-result.txt ] && grep -q 'RESULT pass=15 fail=0' data/mibtest-result.txt; then
+    ok "DB復帰後に全シナリオが再び通る"
+else
+    ng "DB復帰後に検証が通りませんでした: $(grep RESULT data/mibtest-result.txt 2>/dev/null || echo '結果なし')"
+    grep '^FAIL' data/mibtest-result.txt 2>/dev/null | sed 's/^/       /'
+fi
+
+########################################
+# 9. 停止時のドレイン
 ########################################
 step "停止時にキューが処理し切られるか"
 
@@ -304,7 +392,7 @@ else
 fi
 
 ########################################
-# 9. まとめ
+# 10. まとめ
 ########################################
 step "まとめ"
 

@@ -16,9 +16,11 @@ mysql:
   pool:
     maximumPoolSize: 6
     minimumIdle: 1
-    connectionTimeoutMs: 5000
-    socketTimeoutMs: 15000
+    connectionTimeoutMs: 1000
+    connectTimeoutMs: 1000
+    socketTimeoutMs: 3000
+    startupSocketTimeoutMs: 600000
     idleTimeoutMs: 300000
     maxLifetimeMs: 1200000
-    validationTimeoutMs: 3000
+    validationTimeoutMs: 1000
     leakDetectionThresholdMs: 30000

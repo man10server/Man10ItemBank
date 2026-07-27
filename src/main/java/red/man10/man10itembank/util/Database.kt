@@ -7,7 +7,9 @@ import java.sql.Connection
 import java.sql.PreparedStatement
 import java.sql.ResultSet
 import java.sql.SQLException
+import java.util.Properties
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.logging.Level
 
 /**
@@ -88,6 +90,18 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
     private var dataSource: HikariDataSource? = null
     private var maxRetry = 2
 
+    //起動時の移行など、socketTimeoutを超えうる処理のために保持しておく
+    private var startupUrl = ""
+    private var jdbcUser = ""
+    private var jdbcPassword = ""
+
+    /**
+     * 接続失敗のスタックトレースは最初の1回だけ出す。
+     * 在庫処理は単一スレッドで動くため、DBが落ちている間は同じ例外が
+     * キューの件数だけ積まれてログが埋まる。
+     */
+    private val stackTraceLogged = AtomicBoolean(false)
+
     val isAvailable: Boolean
         get() = dataSource?.isClosed == false
 
@@ -122,28 +136,20 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
         maxRetry = config.getInt("mysql.maxRetry", 2).coerceIn(0, 5)
 
         val useSsl = config.getBoolean("mysql.useSsl", false)
-        val socketTimeoutMs = config.getLong("mysql.pool.socketTimeoutMs", 15_000L)
-        val connectTimeoutMs = config.getLong("mysql.pool.connectionTimeoutMs", 5_000L)
+        val allowPublicKeyRetrieval = config.getBoolean("mysql.allowPublicKeyRetrieval", true)
 
-        val url = buildString {
-            append("jdbc:mysql://").append(host).append(':').append(port).append('/').append(db)
-            append("?characterEncoding=UTF-8")
-            append("&connectionTimeZone=SERVER")
-            // executeUpdateが「一致した行数」を返すようにする(既定値だが明示しておく)。
-            // trueにすると同値更新で0行が返り、成功を失敗と誤判定してしまう
-            append("&useAffectedRows=false")
-            // タイムアウト未設定だと接続が黙って切れた際に永久にブロックし、
-            // 単一スレッドで動く在庫処理が完全に停止する
-            append("&connectTimeout=").append(connectTimeoutMs)
-            append("&socketTimeout=").append(socketTimeoutMs)
-            if (useSsl) {
-                append("&sslMode=REQUIRED")
-            } else {
-                append("&sslMode=DISABLED")
-                append("&allowPublicKeyRetrieval=")
-                    .append(config.getBoolean("mysql.allowPublicKeyRetrieval", true))
-            }
-        }
+        val socketTimeoutMs = config.getLong("mysql.pool.socketTimeoutMs", 3_000L)
+        //プールからコネクションを借りる待ちの上限
+        val borrowTimeoutMs = config.getLong("mysql.pool.connectionTimeoutMs", 1_000L)
+        //TCP接続確立の上限。以前はborrowTimeoutと同じ値を共用していた
+        val connectTimeoutMs = config.getLong("mysql.pool.connectTimeoutMs", 1_000L)
+        val startupSocketTimeoutMs = config.getLong("mysql.pool.startupSocketTimeoutMs", 600_000L)
+
+        jdbcUser = user
+        jdbcPassword = pass
+
+        val url = buildUrl(host, port, db, useSsl, allowPublicKeyRetrieval, connectTimeoutMs, socketTimeoutMs)
+        startupUrl = buildUrl(host, port, db, useSsl, allowPublicKeyRetrieval, connectTimeoutMs, startupSocketTimeoutMs)
 
         val hikari = HikariConfig().apply {
             this.poolName = "${this@Database.poolName}-pool"
@@ -154,10 +160,13 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
 
             maximumPoolSize = config.getInt("mysql.pool.maximumPoolSize", 6).coerceAtLeast(1)
             minimumIdle = config.getInt("mysql.pool.minimumIdle", 1).coerceIn(0, maximumPoolSize)
-            connectionTimeout = connectTimeoutMs.coerceAtLeast(250L)
+            //HikariCPの下限は250ms
+            connectionTimeout = borrowTimeoutMs.coerceAtLeast(250L)
             idleTimeout = config.getLong("mysql.pool.idleTimeoutMs", 300_000L)
             maxLifetime = config.getLong("mysql.pool.maxLifetimeMs", 1_200_000L)
-            validationTimeout = config.getLong("mysql.pool.validationTimeoutMs", 3_000L)
+            //HikariCPは validationTimeout < connectionTimeout を要求する
+            validationTimeout = config.getLong("mysql.pool.validationTimeoutMs", 1_000L)
+                .coerceIn(250L, (connectionTimeout - 100L).coerceAtLeast(250L))
             // 借りっぱなしのコネクションを検出してスタックトレースを出す
             leakDetectionThreshold = config.getLong("mysql.pool.leakDetectionThresholdMs", 30_000L)
 
@@ -188,6 +197,80 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
                 .onFailure { e -> plugin.logger.log(Level.WARNING, "[$poolName] プールの停止に失敗", e) }
         }
         dataSource = null
+    }
+
+    private fun buildUrl(
+        host: String,
+        port: Int,
+        db: String,
+        useSsl: Boolean,
+        allowPublicKeyRetrieval: Boolean,
+        connectTimeoutMs: Long,
+        socketTimeoutMs: Long
+    ): String = buildString {
+
+        append("jdbc:mysql://").append(host).append(':').append(port).append('/').append(db)
+        append("?characterEncoding=UTF-8")
+        append("&connectionTimeZone=SERVER")
+        // executeUpdateが「一致した行数」を返すようにする(既定値だが明示しておく)。
+        // trueにすると同値更新で0行が返り、成功を失敗と誤判定してしまう
+        append("&useAffectedRows=false")
+        // タイムアウト未設定だと接続が黙って切れた際に永久にブロックし、
+        // 単一スレッドで動く在庫処理が完全に停止する
+        append("&connectTimeout=").append(connectTimeoutMs)
+        append("&socketTimeout=").append(socketTimeoutMs)
+        // 行ロック待ちは socketTimeout より先に切れなければならない。
+        // socketTimeout が先に来ると「サーバー側で文が実行中かどうか分からない」状態になり、
+        // ロールバックが保証される 1205 と違って再試行も判断もできなくなる
+        append("&sessionVariables=innodb_lock_wait_timeout=").append(lockWaitSeconds(socketTimeoutMs))
+
+        if (useSsl) {
+            append("&sslMode=REQUIRED")
+        } else {
+            append("&sslMode=DISABLED")
+            append("&allowPublicKeyRetrieval=").append(allowPublicKeyRetrieval)
+        }
+    }
+
+    /** socketTimeoutより確実に短いロック待ち時間(秒)。socketTimeout=0(無制限)ならMySQLの既定に任せる */
+    private fun lockWaitSeconds(socketTimeoutMs: Long): Long =
+        if (socketTimeoutMs <= 0) 50 else ((socketTimeoutMs - 500) / 1000).coerceIn(1, 50)
+
+    ////////////////////////////////
+    //      起動時専用の接続
+    ////////////////////////////////
+
+    /**
+     * プールとは別の、応答待ちが長い専用コネクションで実行する。
+     *
+     * 起動時のスキーマ移行は `ALTER TABLE ADD UNIQUE` や全件の重複統合を含み、
+     * テーブルが大きいと通常の socketTimeout を超える。プールを使うと移行が
+     * 中途半端に失敗してプラグインが起動しなくなるため、ここだけ別扱いにする。
+     *
+     * メインスレッドから起動時に一度だけ呼ぶ想定。
+     */
+    fun <T> withStartupConnection(label: String, block: (Connection) -> T): DbResult<T> {
+
+        if (startupUrl.isEmpty()) {
+            return DbResult.Failure("接続設定が初期化されていません")
+        }
+
+        return try {
+            //DriverManagerはlibraries:で読まれたドライバを見つけられないことがあるため直接生成する
+            val driver = Class.forName(DRIVER_CLASS).getDeclaredConstructor().newInstance() as java.sql.Driver
+
+            val props = Properties().apply {
+                setProperty("user", jdbcUser)
+                setProperty("password", jdbcPassword)
+            }
+
+            driver.connect(startupUrl, props).use { con ->
+                DbResult.Success(block(con))
+            }
+        } catch (e: Throwable) {
+            plugin.logger.log(Level.SEVERE, "[$poolName] 起動時処理に失敗: $label", e)
+            DbResult.Failure("起動時処理に失敗しました: ${rootMessage(e)}", e)
+        }
     }
 
     ////////////////////////////////
@@ -250,12 +333,13 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
             } catch (e: SQLException) {
                 if (attempt < maxRetry) {
                     attempt++
-                    plugin.logger.warning("[$poolName] コネクション取得に失敗、再試行 $attempt/$maxRetry: ${e.message}")
                     continue
                 }
-                plugin.logger.log(Level.SEVERE, "[$poolName] コネクション取得に失敗: ${shorten(label)}", e)
-                return DbResult.Failure("コネクションを取得できませんでした: ${e.message}", e)
+                logConnectionFailure(label, e)
+                return DbResult.Failure("コネクションを取得できませんでした: ${rootMessage(e)}", e)
             }
+
+            stackTraceLogged.set(false)
 
             // 2) SQL実行
             try {
@@ -284,6 +368,35 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
     ////////////////////////////////
     //      内部ユーティリティ
     ////////////////////////////////
+
+    /**
+     * 接続失敗のログ。原因の要点だけを毎回出し、スタックトレースは最初の1回だけにする。
+     * DBが落ちている間はキューの件数だけ同じ例外が出るため、全文を毎回出すとログが埋まる。
+     */
+    private fun logConnectionFailure(label: String, e: Throwable) {
+
+        val message = "[$poolName] コネクション取得に失敗 (${attemptsLabel()}): ${rootMessage(e)} / ${shorten(label)}"
+
+        if (stackTraceLogged.compareAndSet(false, true)) {
+            plugin.logger.log(Level.SEVERE, message, e)
+        } else {
+            plugin.logger.severe(message)
+        }
+    }
+
+    private fun attemptsLabel(): String = "計${maxRetry + 1}回試行"
+
+    /** 例外チェーンの根本原因のメッセージ。UnknownHostException などを埋もれさせない */
+    private fun rootMessage(e: Throwable): String {
+
+        var cause: Throwable = e
+        while (cause.cause != null && cause.cause !== cause) cause = cause.cause!!
+
+        val name = cause::class.java.simpleName
+        val text = cause.message?.trim().orEmpty()
+
+        return if (text.isEmpty()) name else "$name: $text"
+    }
 
     private fun readPort(raw: Any?): Int = when (raw) {
         is Number -> raw.toInt()

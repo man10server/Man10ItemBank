@@ -1,5 +1,6 @@
 package red.man10.man10itembank.util
 
+import java.sql.Connection
 import java.util.logging.Logger
 
 /**
@@ -11,6 +12,9 @@ import java.util.logging.Logger
  * item_storage(uuid, item_id) のUNIQUE制約は原子的な在庫操作の前提であり、
  * 無いまま動かすと重複行の片方だけが更新される事故が起きるため、
  * 移行できなかった場合はプラグインを起動させない。
+ *
+ * ここだけプールを使わず専用コネクションで動く。ALTER や全件の重複統合は
+ * テーブルが大きいと通常の socketTimeout を超え、移行が中途半端に失敗するため。
  */
 object Migration {
 
@@ -27,14 +31,29 @@ object Migration {
      */
     fun run(db: Database, logger: Logger, autoMigrate: Boolean): Boolean {
 
-        if (!ensureTables(db, logger, autoMigrate)) return false
+        val result = db.withStartupConnection("スキーマ移行") { con ->
+            migrate(con, logger, autoMigrate)
+        }
 
-        val hasUnique = hasUniqueStorageIndex(db, logger) ?: return false
+        return when (result) {
+
+            is DbResult.Success -> result.value
+
+            is DbResult.Failure -> {
+                logger.severe("スキーマの確認に失敗しました: ${result.message}")
+                false
+            }
+        }
+    }
+
+    private fun migrate(con: Connection, logger: Logger, autoMigrate: Boolean): Boolean {
+
+        if (!ensureTables(con, logger, autoMigrate)) return false
 
         //既に移行済み
-        if (hasUnique) {
+        if (hasUniqueStorageIndex(con)) {
             //過去の移行で残った冗長なインデックスがあれば掃除する
-            if (autoMigrate) dropRedundantStorageIndex(db, logger)
+            if (autoMigrate) dropRedundantStorageIndex(con, logger)
             return true
         }
 
@@ -47,15 +66,13 @@ object Migration {
 
         logger.warning("===== item_storage のスキーマ移行を開始します =====")
 
-        if (!mergeDuplicatedStorages(db, logger)) return false
-        if (!addUniqueStorageIndex(db, logger)) return false
+        if (!mergeDuplicatedStorages(con, logger)) return false
+        if (!addUniqueStorageIndex(con, logger)) return false
 
-        dropRedundantStorageIndex(db, logger)
+        dropRedundantStorageIndex(con, logger)
 
         //最終確認。ここがtrueにならない限り起動させない
-        val verified = hasUniqueStorageIndex(db, logger) ?: return false
-
-        if (!verified) {
+        if (!hasUniqueStorageIndex(con)) {
             logger.severe("移行後もUNIQUE(uuid, item_id)を確認できませんでした")
             return false
         }
@@ -76,11 +93,9 @@ object Migration {
      * 一部だけ欠けたDB(storage_logだけ無い等)でも同じ処理で足りる。
      * DDLは暗黙コミットを伴うので、途中で失敗しても次回起動時に残りから作られる。
      */
-    private fun ensureTables(db: Database, logger: Logger, autoMigrate: Boolean): Boolean {
+    private fun ensureTables(con: Connection, logger: Logger, autoMigrate: Boolean): Boolean {
 
-        val existing = existingTables(db, logger) ?: return false
-
-        val missing = REQUIRED_TABLES.filterNot { it in existing }
+        val missing = REQUIRED_TABLES.filterNot { it in existingTables(con) }
 
         if (missing.isEmpty()) return true
 
@@ -100,17 +115,16 @@ object Migration {
             //既存のテーブルに対する文は実行しない
             if (table !in missing) continue
 
-            val result = db.update(sql)
+            val failure = runCatching { con.executeUpdate(sql) }.exceptionOrNull()
 
-            if (result is DbResult.Failure) {
-                logger.severe("テーブルの作成に失敗しました ($table): ${result.message}")
+            if (failure != null) {
+                logger.severe("テーブルの作成に失敗しました ($table): ${failure.message}")
                 logger.severe("DBユーザーにCREATE権限があるか確認してください。")
                 return false
             }
         }
 
-        val after = existingTables(db, logger) ?: return false
-        val stillMissing = REQUIRED_TABLES.filterNot { it in after }
+        val stillMissing = REQUIRED_TABLES.filterNot { it in existingTables(con) }
 
         if (stillMissing.isNotEmpty()) {
             logger.severe("作成後もテーブルを確認できませんでした: ${stillMissing.joinToString(", ")}")
@@ -179,9 +193,9 @@ object Migration {
      * 合算と削除は同一トランザクションで行う。
      * 分けて実行すると、合算だけが2回走った場合に在庫を二重計上してしまう。
      */
-    private fun mergeDuplicatedStorages(db: Database, logger: Logger): Boolean {
+    private fun mergeDuplicatedStorages(con: Connection, logger: Logger): Boolean {
 
-        val duplicates = db.query(
+        val duplicates = con.executeQuery(
             "SELECT uuid, item_id, COUNT(*) AS row_count, SUM(amount) AS total_amount, " +
                     "GROUP_CONCAT(id ORDER BY id) AS ids, " +
                     "GROUP_CONCAT(amount ORDER BY id) AS amounts " +
@@ -196,7 +210,7 @@ object Migration {
                 )
             }
             list
-        }.valueOrLog(logger, "重複行の確認") ?: return false
+        }
 
         if (duplicates.isEmpty()) {
             logger.info("重複した倉庫行はありませんでした")
@@ -207,26 +221,31 @@ object Migration {
         logger.warning("重複した倉庫行を${duplicates.size}組検出しました。在庫を合算して1行へ統合します")
         duplicates.forEach { logger.warning("  $it") }
 
-        val deleted = db.transaction("重複行の統合") { con ->
+        val deleted = runCatching {
+            inTransaction(con) {
 
-            //残す行(最小id)に合計値を入れる
-            con.executeUpdate(
-                "UPDATE item_storage AS s " +
-                        "JOIN (SELECT MIN(id) AS keep_id, SUM(amount) AS total_amount " +
-                        "      FROM item_storage GROUP BY uuid, item_id HAVING COUNT(*) > 1) AS d " +
-                        "  ON s.id = d.keep_id " +
-                        "SET s.amount = d.total_amount, s.time = now()"
-            )
+                //残す行(最小id)に合計値を入れる
+                con.executeUpdate(
+                    "UPDATE item_storage AS s " +
+                            "JOIN (SELECT MIN(id) AS keep_id, SUM(amount) AS total_amount " +
+                            "      FROM item_storage GROUP BY uuid, item_id HAVING COUNT(*) > 1) AS d " +
+                            "  ON s.id = d.keep_id " +
+                            "SET s.amount = d.total_amount, s.time = now()"
+                )
 
-            //合算済みの余剰行を削除する
-            con.executeUpdate(
-                "DELETE s FROM item_storage AS s " +
-                        "JOIN (SELECT MIN(id) AS keep_id, uuid, item_id " +
-                        "      FROM item_storage GROUP BY uuid, item_id HAVING COUNT(*) > 1) AS d " +
-                        "  ON s.uuid = d.uuid AND s.item_id = d.item_id " +
-                        "WHERE s.id <> d.keep_id"
-            )
-        }.valueOrLog(logger, "重複行の統合") ?: return false
+                //合算済みの余剰行を削除する
+                con.executeUpdate(
+                    "DELETE s FROM item_storage AS s " +
+                            "JOIN (SELECT MIN(id) AS keep_id, uuid, item_id " +
+                            "      FROM item_storage GROUP BY uuid, item_id HAVING COUNT(*) > 1) AS d " +
+                            "  ON s.uuid = d.uuid AND s.item_id = d.item_id " +
+                            "WHERE s.id <> d.keep_id"
+                )
+            }
+        }.getOrElse {
+            logger.severe("重複行の統合に失敗しました: ${it.message}")
+            return false
+        }
 
         logger.warning("重複行を統合しました(削除した行数: $deleted)")
 
@@ -237,15 +256,14 @@ object Migration {
     //      手順2: UNIQUE制約
     ////////////////////////////////
 
-    private fun addUniqueStorageIndex(db: Database, logger: Logger): Boolean {
+    private fun addUniqueStorageIndex(con: Connection, logger: Logger): Boolean {
 
         //中断された移行で名前だけ残っている場合を検出する
-        val nameTaken = db.query(
+        val nameTaken = con.executeQuery(
             "SELECT COUNT(*) FROM information_schema.statistics " +
                     "WHERE table_schema = DATABASE() AND table_name = 'item_storage' AND index_name = ?",
             UNIQUE_INDEX_NAME
         ) { rs -> rs.next() && rs.getInt(1) > 0 }
-            .valueOrLog(logger, "インデックス名の確認") ?: return false
 
         if (nameTaken) {
             logger.severe("$UNIQUE_INDEX_NAME が期待した形で存在しません。手動で確認してください。")
@@ -253,15 +271,15 @@ object Migration {
             return false
         }
 
-        logger.warning("UNIQUE(uuid, item_id) を作成します")
+        logger.warning("UNIQUE(uuid, item_id) を作成します(テーブルが大きい場合は時間がかかります)")
 
         // ALTER TABLE は暗黙コミットを伴うため、トランザクションに含めず単体で実行する
-        val result = db.update(
-            "ALTER TABLE item_storage ADD CONSTRAINT $UNIQUE_INDEX_NAME UNIQUE (uuid, item_id)"
-        )
+        val failure = runCatching {
+            con.executeUpdate("ALTER TABLE item_storage ADD CONSTRAINT $UNIQUE_INDEX_NAME UNIQUE (uuid, item_id)")
+        }.exceptionOrNull()
 
-        if (result is DbResult.Failure) {
-            logger.severe("UNIQUE制約の作成に失敗しました: ${result.message}")
+        if (failure != null) {
+            logger.severe("UNIQUE制約の作成に失敗しました: ${failure.message}")
             logger.severe("DBユーザーにALTER権限があるか確認してください。")
             return false
         }
@@ -273,26 +291,29 @@ object Migration {
      * UNIQUE化により冗長になった非UNIQUEインデックスを削除する。
      * 失敗しても動作には影響しないため、警告のみで続行する。
      */
-    private fun dropRedundantStorageIndex(db: Database, logger: Logger) {
+    private fun dropRedundantStorageIndex(con: Connection, logger: Logger) {
 
-        val names = db.query(
-            "SELECT index_name FROM information_schema.statistics " +
-                    "WHERE table_schema = DATABASE() AND table_name = 'item_storage' AND non_unique = 1 " +
-                    "GROUP BY index_name " +
-                    "HAVING COUNT(*) = 2 " +
-                    "   AND SUM(column_name = 'uuid') = 1 " +
-                    "   AND SUM(column_name = 'item_id') = 1"
-        ) { rs ->
-            val list = mutableListOf<String>()
-            while (rs.next()) list.add(rs.getString("index_name"))
-            list
-        }.valueOrNull() ?: return
+        val names = runCatching {
+            con.executeQuery(
+                "SELECT index_name FROM information_schema.statistics " +
+                        "WHERE table_schema = DATABASE() AND table_name = 'item_storage' AND non_unique = 1 " +
+                        "GROUP BY index_name " +
+                        "HAVING COUNT(*) = 2 " +
+                        "   AND SUM(column_name = 'uuid') = 1 " +
+                        "   AND SUM(column_name = 'item_id') = 1"
+            ) { rs ->
+                val list = mutableListOf<String>()
+                while (rs.next()) list.add(rs.getString("index_name"))
+                list
+            }
+        }.getOrNull() ?: return
 
         for (name in names) {
             //識別子はパラメータ化できないが、値はinformation_schemaから取得したもの
-            val result = db.update("ALTER TABLE item_storage DROP INDEX `$name`")
+            val failure = runCatching { con.executeUpdate("ALTER TABLE item_storage DROP INDEX `$name`") }
+                .exceptionOrNull()
 
-            if (result is DbResult.Failure) {
+            if (failure != null) {
                 logger.warning("冗長なインデックス $name の削除に失敗しました(動作に影響はありません)")
             } else {
                 logger.info("冗長なインデックス $name を削除しました")
@@ -304,24 +325,19 @@ object Migration {
     //      確認
     ////////////////////////////////
 
-    /**
-     * このDBに存在するテーブル名。nullは確認失敗。
-     *
-     * 「無い」と「確認できなかった」を区別する。混同すると、
-     * 一時的なDB障害を「テーブルが無い」と誤認して作成処理へ進んでしまう。
-     */
-    private fun existingTables(db: Database, logger: Logger): Set<String>? =
-        db.query(
+    /** このDBに存在するテーブル名 */
+    private fun existingTables(con: Connection): Set<String> =
+        con.executeQuery(
             "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()"
         ) { rs ->
             val names = mutableSetOf<String>()
             while (rs.next()) names.add(rs.getString(1).lowercase())
             names
-        }.valueOrLog(logger, "テーブル一覧の確認")
+        }
 
-    /** (uuid, item_id) だけで構成されたUNIQUEインデックスがあるか。nullは確認失敗 */
-    private fun hasUniqueStorageIndex(db: Database, logger: Logger): Boolean? =
-        db.query(
+    /** (uuid, item_id) だけで構成されたUNIQUEインデックスがあるか */
+    private fun hasUniqueStorageIndex(con: Connection): Boolean =
+        con.executeQuery(
             "SELECT COUNT(*) FROM (" +
                     "  SELECT index_name FROM information_schema.statistics" +
                     "  WHERE table_schema = DATABASE() AND table_name = 'item_storage' AND non_unique = 0" +
@@ -330,14 +346,21 @@ object Migration {
                     "     AND SUM(column_name = 'uuid') = 1" +
                     "     AND SUM(column_name = 'item_id') = 1" +
                     ") t"
-        ) { rs -> if (rs.next()) rs.getInt(1) > 0 else false }
-            .valueOrLog(logger, "UNIQUE制約の確認")
+        ) { rs -> rs.next() && rs.getInt(1) > 0 }
 
-    private fun <T> DbResult<T>.valueOrLog(logger: Logger, what: String): T? = when (this) {
-        is DbResult.Success -> value
-        is DbResult.Failure -> {
-            logger.severe("$what に失敗しました: $message")
-            null
+    private fun <T> inTransaction(con: Connection, block: () -> T): T {
+
+        con.autoCommit = false
+
+        return try {
+            val result = block()
+            con.commit()
+            result
+        } catch (e: Throwable) {
+            runCatching { con.rollback() }
+            throw e
+        } finally {
+            runCatching { con.autoCommit = true }
         }
     }
 }
