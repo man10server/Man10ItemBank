@@ -61,6 +61,8 @@ class MibTest : JavaPlugin(), CommandExecutor {
 
             "ping" -> ping(sender)
 
+            "bench" -> bench(sender, args.getOrNull(1)?.toIntOrNull() ?: 100)
+
             "status" -> sender.sendMessage(
                 "itemQueue=${ItemData.getQueueSize()} " +
                         "logQueue=${red.man10.man10itembank.Log.queueSize()} " +
@@ -76,6 +78,50 @@ class MibTest : JavaPlugin(), CommandExecutor {
         }
 
         return true
+    }
+
+    /**
+     * 在庫操作を連続で投げ、キューが捌ける速さを測る。
+     *
+     * 在庫処理は単一スレッドなので、ここが流入レートを下回るとキューが伸び続ける。
+     * DBが落ちている状態で走らせると、失敗経路の速さ(＝詰まらないか)が分かる。
+     */
+    private fun bench(sender: CommandSender, count: Int) {
+
+        val itemKey = config.getString("item.key") ?: "e2e_diamond"
+        val itemId = ItemData.getID(itemKey)
+
+        if (itemId == -1) {
+            logger.warning("BENCH ng (item_key=$itemKey が未読み込み)")
+            return
+        }
+
+        val uuid = java.util.UUID.randomUUID()
+        val done = java.util.concurrent.CountDownLatch(count)
+        val ok = java.util.concurrent.atomic.AtomicInteger(0)
+
+        val started = System.nanoTime()
+
+        //キューへの投入自体はメインスレッドから一気に行う
+        repeat(count) {
+            ItemData.changeItemAmount(uuid, uuid, itemId, 1, "Bench") { result ->
+                if (result is red.man10.man10itembank.StockResult.Updated) ok.incrementAndGet()
+                done.countDown()
+            }
+        }
+
+        Thread({
+            val finished = done.await(120, java.util.concurrent.TimeUnit.SECONDS)
+            val elapsedMs = (System.nanoTime() - started) / 1_000_000
+            val perSec = if (elapsedMs > 0) count * 1000L / elapsedMs else -1
+
+            logger.info(
+                "BENCH count=$count ok=${ok.get()} elapsedMs=$elapsedMs perSec=$perSec " +
+                        "completed=$finished queue=${ItemData.getQueueSize()}"
+            )
+        }, "MibTest-Bench").start()
+
+        sender.sendMessage("bench を開始しました (count=$count)")
     }
 
     /**

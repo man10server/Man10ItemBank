@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import red.man10.man10itembank.testsupport.MySqlProxy
 import red.man10.man10itembank.testsupport.MySqlSupport
 import red.man10.man10itembank.testsupport.TestPluginContext
 
@@ -299,6 +300,186 @@ class DatabaseTest {
         val timedOut = db.query("SELECT SLEEP(4)") { rs -> rs.next() }
 
         assertTrue(timedOut is DbResult.Failure, "通常のプールが3秒を超えて待ってしまいました")
+    }
+
+    ////////////////////////////////
+    //      サーキットブレーカー
+    ////////////////////////////////
+
+    /** MySQLの手前にプロキシを挟み、起動後にDBが落ちる状況を作る */
+    private fun throughProxy(
+        proxy: MySqlProxy,
+        configure: org.bukkit.configuration.file.YamlConfiguration.() -> Unit = {}
+    ): Pair<Database, TestPluginContext> {
+
+        val context = TestPluginContext(schema) {
+            set("mysql.port", proxy.port)
+            set("mysql.pool.connectionTimeoutMs", 400)
+            set("mysql.pool.connectTimeoutMs", 400)
+            set("mysql.circuitBreaker.failureThreshold", 3)
+            set("mysql.circuitBreaker.probeIntervalMs", 500)
+            configure()
+        }
+
+        val db = Database(context.plugin, "breaker").also { opened.add(it) }
+
+        return db to context
+    }
+
+    @Test
+    @DisplayName("接続失敗が続くと、以降は接続を試みずに即座に失敗する")
+    fun opensCircuitAfterRepeatedFailures() {
+
+        MySqlProxy().use { proxy ->
+
+            val (db, context) = throughProxy(proxy)
+
+            assertTrue(db.connect(), "プロキシ経由で接続できませんでした")
+            assertTrue(db.update("UPDATE counter SET value = 1 WHERE id = 1") is DbResult.Success)
+
+            //DBが落ちた状態にする
+            proxy.forwarding = false
+            proxy.cutLiveConnections()
+
+            repeat(3) { db.update("UPDATE counter SET value = 1 WHERE id = 1") }
+
+            assertTrue(db.isCircuitOpen, "3回失敗してもブレーカーが開いていません\n${context.logs.dump()}")
+            assertTrue(context.logs.anyContains("即座に失敗させます"), context.logs.dump())
+
+            //開いた後は接続そのものを試みない。時間ではなく接続回数で確かめる
+            val before = proxy.accepted
+
+            val elapsed = kotlin.system.measureTimeMillis {
+                repeat(50) {
+                    assertTrue(db.update("UPDATE counter SET value = 1 WHERE id = 1") is DbResult.Failure)
+                }
+            }
+
+            assertEquals(before, proxy.accepted, "ブレーカーが開いているのに接続を試みています")
+            assertTrue(elapsed < 200, "即時失敗になっていません(50件で${elapsed}ms)")
+        }
+    }
+
+    @Test
+    @DisplayName("即時失敗中でも、一定間隔で1件だけ通して復帰を確かめる")
+    fun probesWhileOpen() {
+
+        MySqlProxy().use { proxy ->
+
+            val (db, _) = throughProxy(proxy)
+
+            assertTrue(db.connect())
+
+            proxy.forwarding = false
+            proxy.cutLiveConnections()
+
+            repeat(3) { db.update("UPDATE counter SET value = 1 WHERE id = 1") }
+            assertTrue(db.isCircuitOpen)
+
+            //間隔前は接続を試みない
+            val before = proxy.accepted
+            repeat(10) { db.update("UPDATE counter SET value = 1 WHERE id = 1") }
+            assertEquals(before, proxy.accepted, "間隔前に接続を試みています")
+
+            Thread.sleep(600)
+
+            //間隔が過ぎたら1件だけ試みる
+            db.update("UPDATE counter SET value = 1 WHERE id = 1")
+            assertTrue(proxy.accepted > before, "復帰確認の試行が行われていません")
+        }
+    }
+
+    @Test
+    @DisplayName("即時失敗中の接続試行は、操作数ではなく経過時間で決まる")
+    fun probeRateIsBoundedByInterval() {
+
+        // 復帰確認の間隔を「許可を出した時点」から測ると、試行自体が
+        // 接続タイムアウト分かかるせいで終わった瞬間に期限切れになり、
+        // 結局すべての操作が接続を試みてキューが詰まる。
+        // それを検出するため、接続タイムアウトと間隔を同じ長さにする
+        MySqlProxy().use { proxy ->
+
+            val (db, _) = throughProxy(proxy) {
+                set("mysql.pool.connectionTimeoutMs", 500)
+                set("mysql.pool.connectTimeoutMs", 500)
+                set("mysql.circuitBreaker.probeIntervalMs", 500)
+            }
+
+            assertTrue(db.connect())
+
+            proxy.forwarding = false
+            proxy.cutLiveConnections()
+
+            repeat(3) { db.update("UPDATE counter SET value = 1 WHERE id = 1") }
+            assertTrue(db.isCircuitOpen)
+
+            val before = proxy.accepted
+            val started = System.currentTimeMillis()
+            var operations = 0
+
+            while (System.currentTimeMillis() - started < 2_000) {
+                db.update("UPDATE counter SET value = 1 WHERE id = 1")
+                operations++
+            }
+
+            val attempts = proxy.accepted - before
+
+            //即時失敗なら2秒で数千件は捌ける
+            assertTrue(operations > 100, "即時失敗になっていません(2秒で${operations}件)")
+            //接続試行は 2秒 / 500ms = 4回程度に収まるはず
+            assertTrue(attempts <= 8, "接続試行が多すぎます(${attempts}回 / ${operations}件)")
+        }
+    }
+
+    @Test
+    @DisplayName("DBが戻ればブレーカーは閉じ、通常の処理に戻る")
+    fun closesCircuitAfterRecovery() {
+
+        MySqlProxy().use { proxy ->
+
+            val (db, context) = throughProxy(proxy)
+
+            assertTrue(db.connect())
+
+            proxy.forwarding = false
+            proxy.cutLiveConnections()
+
+            repeat(3) { db.update("UPDATE counter SET value = 1 WHERE id = 1") }
+            assertTrue(db.isCircuitOpen)
+
+            //DBが戻る
+            proxy.forwarding = true
+            Thread.sleep(600)
+
+            //復帰確認の1件が通る
+            var recovered = false
+            repeat(10) {
+                if (db.update("UPDATE counter SET value = 42 WHERE id = 1") is DbResult.Success) {
+                    recovered = true
+                    return@repeat
+                }
+                Thread.sleep(600)
+            }
+
+            assertTrue(recovered, "復帰できませんでした\n${context.logs.dump()}")
+            assertFalse(db.isCircuitOpen, "復帰後もブレーカーが開いています")
+            assertTrue(context.logs.anyContains("接続が回復しました"), context.logs.dump())
+            assertEquals(42, currentValue())
+        }
+    }
+
+    @Test
+    @DisplayName("SQL自体の失敗ではブレーカーを開かない")
+    fun sqlErrorDoesNotOpenCircuit() {
+
+        val (db, _) = database()
+        db.connect()
+
+        //接続はできているので、在庫処理を止める理由にならない
+        repeat(5) { db.update("UPDATE counter SET no_such_column = 1 WHERE id = 1") }
+
+        assertFalse(db.isCircuitOpen, "SQLエラーでブレーカーが開いています")
+        assertTrue(db.update("UPDATE counter SET value = 7 WHERE id = 1") is DbResult.Success)
     }
 
     private fun currentValue(): Int =

@@ -10,6 +10,8 @@ import java.sql.SQLException
 import java.util.Properties
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.logging.Level
 
 /**
@@ -102,6 +104,78 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
      */
     private val stackTraceLogged = AtomicBoolean(false)
 
+    ////////////////////////////////
+    //      サーキットブレーカー
+    ////////////////////////////////
+
+    /*
+     * DBが落ちている間、キューに積まれた操作がそれぞれ独立に接続を試みると、
+     * 1件ごとに connectionTimeout 分ブロックする。在庫処理は単一スレッドなので、
+     * 流入が排出を上回った時点でキューが際限なく伸びる。
+     *
+     * 一度落ちていると分かったら、以降は接続を試みずに即座に失敗させ、
+     * 一定間隔で1件だけ通して復帰を確かめる。
+     * 失敗は安全側(現物を渡さない・返却する)に倒れるため、
+     * 誤ってOPENにしてもアイテムは壊れない。
+     */
+
+    private var failureThreshold = 3
+    private var probeIntervalMs = 1_000L
+
+    private val consecutiveFailures = AtomicInteger(0)
+
+    /** 0ならCLOSED(通常)。それ以外はこの時刻まで即座に失敗させる */
+    private val openUntil = AtomicLong(0L)
+
+    val isCircuitOpen: Boolean
+        get() = openUntil.get() != 0L
+
+    /**
+     * 実行してよいか。OPEN中でも、期限が来たら1スレッドだけ通して復帰を確かめる。
+     */
+    private fun tryAcquirePermit(): Boolean {
+
+        val until = openUntil.get()
+        if (until == 0L) return true
+
+        val now = System.currentTimeMillis()
+        if (now < until) return false
+
+        // 期限切れ。CASで勝った1つだけが復帰確認に進む。
+        // ここで入れる期限は同時に複数が走らないようにするための仮の値で、
+        // 本来の間隔は試行が終わってから onFailure が入れ直す
+        return openUntil.compareAndSet(until, now + probeIntervalMs)
+    }
+
+    private fun onSuccess() {
+
+        consecutiveFailures.set(0)
+        stackTraceLogged.set(false)
+
+        if (openUntil.getAndSet(0L) != 0L) {
+            plugin.logger.info("[$poolName] DBへの接続が回復しました")
+        }
+    }
+
+    private fun onFailure() {
+
+        val failures = consecutiveFailures.incrementAndGet()
+
+        if (failures < failureThreshold) return
+
+        // 次に試すのは「この試行が終わってから」probeIntervalMs 後。
+        // 許可を出した時点から測ると、試行自体が接続タイムアウト分かかるせいで
+        // 終わった瞬間に期限切れになり、結局すべての操作が接続を試みてしまう
+        val previous = openUntil.getAndSet(System.currentTimeMillis() + probeIntervalMs)
+
+        if (previous == 0L) {
+            plugin.logger.severe(
+                "[$poolName] DBへの接続が${failures}回続けて失敗したため、" +
+                        "以降は接続を試みず即座に失敗させます(${probeIntervalMs}ms毎に復帰を確認)"
+            )
+        }
+    }
+
     val isAvailable: Boolean
         get() = dataSource?.isClosed == false
 
@@ -134,6 +208,9 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
         }
 
         maxRetry = config.getInt("mysql.maxRetry", 2).coerceIn(0, 5)
+
+        failureThreshold = config.getInt("mysql.circuitBreaker.failureThreshold", 3).coerceAtLeast(1)
+        probeIntervalMs = config.getLong("mysql.circuitBreaker.probeIntervalMs", 1_000L).coerceAtLeast(100L)
 
         val useSsl = config.getBoolean("mysql.useSsl", false)
         val allowPublicKeyRetrieval = config.getBoolean("mysql.allowPublicKeyRetrieval", true)
@@ -323,28 +400,38 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
             return DbResult.Failure(message)
         }
 
+        // DBが落ちていると分かっている間は接続を試みない。
+        // 1件ずつ connectionTimeout を待っていると、単一スレッドのキューが際限なく伸びる
+        if (!tryAcquirePermit()) {
+            return DbResult.Failure("DBへ接続できない状態が続いています")
+        }
+
         var attempt = 0
 
         while (true) {
 
-            // 1) コネクション取得。ここでの失敗はSQL未実行が確定しているので常に再試行できる
+            // 1) コネクション取得。
+            // HikariCPが connectionTimeout の間ずっと接続確立を試み続けるため、
+            // ここを外側で再試行しても同じ待ちを繰り返すだけになる。再試行しない
             val con = try {
                 ds.connection
             } catch (e: SQLException) {
-                if (attempt < maxRetry) {
-                    attempt++
-                    continue
-                }
-                logConnectionFailure(label, e)
+                val wasOpen = isCircuitOpen
+                onFailure()
+                //OPEN中は呼び出し側が結果をログに残すので、ここでは重ねて出さない
+                if (!wasOpen) logConnectionFailure(label, e)
                 return DbResult.Failure("コネクションを取得できませんでした: ${rootMessage(e)}", e)
             }
 
-            stackTraceLogged.set(false)
-
             // 2) SQL実行
             try {
-                con.use { return DbResult.Success(block(it)) }
+                con.use {
+                    val result = DbResult.Success(block(it))
+                    onSuccess()
+                    return result
+                }
             } catch (e: SQLException) {
+                //ロールバックが保証されるエラーだけは再試行する価値がある
                 if (e.errorCode in RETRYABLE_ERROR_CODES && attempt < maxRetry) {
                     attempt++
                     plugin.logger.warning(
@@ -352,6 +439,17 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
                     )
                     continue
                 }
+                // 通信断は「SQLの失敗」ではなく接続の問題なので、ブレーカーの判断材料にする。
+                // プールから借りた時点では生きているように見えても、
+                // 実行中に切れていたと分かることがある
+                if (isConnectionProblem(e)) {
+                    val wasOpen = isCircuitOpen
+                    onFailure()
+                    if (!wasOpen) logConnectionFailure(label, e)
+                    return DbResult.Failure("DBとの通信に失敗しました: ${rootMessage(e)}", e)
+                }
+
+                //ここまで来たら接続はできている。SQL自体の誤りでブレーカーは開かない
                 plugin.logger.log(
                     Level.SEVERE,
                     "[$poolName] SQLの実行に失敗 (errorCode=${e.errorCode} sqlState=${e.sqlState}): ${shorten(label)}",
@@ -375,7 +473,7 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
      */
     private fun logConnectionFailure(label: String, e: Throwable) {
 
-        val message = "[$poolName] コネクション取得に失敗 (${attemptsLabel()}): ${rootMessage(e)} / ${shorten(label)}"
+        val message = "[$poolName] DBへ接続できません: ${rootMessage(e)} / ${shorten(label)}"
 
         if (stackTraceLogged.compareAndSet(false, true)) {
             plugin.logger.log(Level.SEVERE, message, e)
@@ -384,7 +482,15 @@ class Database(private val plugin: JavaPlugin, private val poolName: String) {
         }
     }
 
-    private fun attemptsLabel(): String = "計${maxRetry + 1}回試行"
+    /**
+     * DBに届いていないことが原因の失敗か。
+     * SQLの誤りと区別して、ブレーカーを開く判断に使う。
+     */
+    private fun isConnectionProblem(e: SQLException): Boolean =
+        e is java.sql.SQLTransientConnectionException ||
+                e is java.sql.SQLNonTransientConnectionException ||
+                //08xxx は connection exception (08S01 = 通信リンク障害)
+                e.sqlState?.startsWith("08") == true
 
     /** 例外チェーンの根本原因のメッセージ。UnknownHostException などを埋もれさせない */
     private fun rootMessage(e: Throwable): String {

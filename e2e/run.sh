@@ -296,7 +296,39 @@ else
 fi
 
 ########################################
-# 8. DB停止中の挙動と応答時間
+# 8. スループット (正常時)
+########################################
+step "正常時のスループット"
+
+$RCON mibtest bench 300 >/dev/null 2>&1
+
+for _ in $(seq 1 60); do
+    paper_logs | grep -q 'BENCH count=300' && break
+    sleep 2
+done
+
+BENCH_OK=$(paper_logs | grep -m1 'BENCH count=300' || true)
+
+if [ -n "$BENCH_OK" ]; then
+    info "${BENCH_OK#*BENCH }"
+    HEALTHY_RATE=$(sed -E 's/.*perSec=([0-9-]+).*/\1/' <<<"$BENCH_OK")
+    # 想定は10 req/s。単一スレッドのキューがそれを大きく上回ること
+    if [ "${HEALTHY_RATE:-0}" -ge 50 ]; then
+        ok "正常時は ${HEALTHY_RATE} 件/秒 (想定10 req/s に対して十分)"
+    else
+        ng "正常時のスループットが低すぎます (${HEALTHY_RATE} 件/秒)"
+    fi
+    if grep -q 'BENCH count=300 ok=300' <<<"$BENCH_OK"; then
+        ok "300件すべて成功した"
+    else
+        ng "失敗した操作があります: $BENCH_OK"
+    fi
+else
+    ng "ベンチの結果が出ませんでした"
+fi
+
+########################################
+# 9. DB停止中の挙動と応答時間
 ########################################
 step "DB停止中の挙動"
 
@@ -312,17 +344,17 @@ done
 
 OUTAGE_LOGS=$(paper_logs)
 
-if grep -qE 'コネクション取得に失敗' <<<"$OUTAGE_LOGS"; then
+if grep -qE 'DBへ接続できません' <<<"$OUTAGE_LOGS"; then
     ok "DB断を検出してエラーとして扱った"
     # 1操作あたりの待ち時間 = connectionTimeoutMs × (maxRetry + 1) ≒ 3秒
-    FIRST_FAIL=$(grep -m1 -oE 'コネクション取得に失敗 \(計[0-9]+回試行\)' <<<"$OUTAGE_LOGS")
+    FIRST_FAIL=$(grep -m1 -oE 'DBへ接続できません: [^/]*' <<<"$OUTAGE_LOGS")
     info "${FIRST_FAIL:-}"
 else
     ng "DB断のエラーログがありません"
 fi
 
 # 原因が埋もれず、スタックトレースが操作ごとに繰り返されないこと
-if grep -qE 'コネクション取得に失敗 .*(UnknownHostException|CommunicationsException|ConnectException|SQLTransientConnectionException)' <<<"$OUTAGE_LOGS"; then
+if grep -qE 'DBへ接続できません: (UnknownHostException|CommunicationsException|ConnectException|SQLTransientConnectionException|EOFException|SocketTimeoutException)' <<<"$OUTAGE_LOGS"; then
     ok "根本原因をログの1行目に出している"
 else
     ng "根本原因が要約されていません"
@@ -339,6 +371,41 @@ if $COMPOSE ps --status running --format '{{.Service}}' 2>/dev/null | grep -qx p
     ok "DB断でもサーバーは動き続けている"
 else
     ng "DB断でサーバーが停止しました"
+fi
+
+# サーキットブレーカーが開き、失敗が即座に返ること。
+# 1件ずつタイムアウトを待っていると 300件 × 1秒 で詰まる
+if grep -q '即座に失敗させます' <<<"$OUTAGE_LOGS"; then
+    ok "連続失敗を検出して即時失敗へ切り替えた"
+else
+    ng "サーキットブレーカーが作動していません"
+fi
+
+$RCON mibtest bench 300 >/dev/null 2>&1
+
+for _ in $(seq 1 60); do
+    paper_logs | grep -c 'BENCH count=300' | grep -qv '^1$' && break
+    sleep 2
+done
+
+OUTAGE_BENCH=$(paper_logs | grep 'BENCH count=300' | tail -1)
+
+if [ -n "$OUTAGE_BENCH" ]; then
+    info "${OUTAGE_BENCH#*BENCH }"
+    OUTAGE_RATE=$(sed -E 's/.*perSec=([0-9-]+).*/\1/' <<<"$OUTAGE_BENCH")
+    # ブレーカーが無いと 1件1秒 = 1件/秒 になり、10 req/s の流入で詰まる
+    if [ "${OUTAGE_RATE:-0}" -ge 50 ]; then
+        ok "DB断中でも ${OUTAGE_RATE} 件/秒で捌けている (キューが詰まらない)"
+    else
+        ng "DB断中の処理が遅く、キューが詰まります (${OUTAGE_RATE} 件/秒)"
+    fi
+    if grep -q 'queue=0' <<<"$OUTAGE_BENCH"; then
+        ok "キューが残っていない"
+    else
+        ng "キューが残っています: $OUTAGE_BENCH"
+    fi
+else
+    ng "DB断中のベンチ結果が出ませんでした"
 fi
 
 $COMPOSE start mysql >/dev/null 2>&1
@@ -384,7 +451,7 @@ else
 fi
 
 ########################################
-# 9. 停止時のドレイン
+# 10. 停止時のドレイン
 ########################################
 step "停止時にキューが処理し切られるか"
 
@@ -406,7 +473,7 @@ else
 fi
 
 ########################################
-# 10. まとめ
+# 11. まとめ
 ########################################
 step "まとめ"
 
