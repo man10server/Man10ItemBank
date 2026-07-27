@@ -378,6 +378,7 @@ object ItemData {
         var ask : Double = 0.0
         var tick : Double = 0.0
         var item : ItemStack? = null
+            get() = field?.clone()
     }
 
     enum class EnumResult{
