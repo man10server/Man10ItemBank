@@ -16,17 +16,18 @@ object Migration {
 
     private const val UNIQUE_INDEX_NAME = "item_storage_uuid_item_id_uindex"
 
+    private const val SCHEMA_RESOURCE = "/db.sql"
+
+    /** db.sql が定義するテーブル。欠けていれば db.sql から作り直す */
+    private val REQUIRED_TABLES = listOf("item_index", "item_storage", "storage_log", "system_log")
+
     /**
-     * @param autoMigrate falseの場合は確認だけ行い、移行が必要なら手動実行を促して失敗を返す
+     * @param autoMigrate falseの場合は確認だけ行い、変更が必要なら手動実行を促して失敗を返す
      * @return 起動を続行してよいか
      */
     fun run(db: Database, logger: Logger, autoMigrate: Boolean): Boolean {
 
-        if (!tableExists(db, logger, "item_storage")) {
-            logger.severe("item_storage テーブルが存在しません。")
-            logger.severe("jar内の db.sql を実行してテーブルを作成してください。")
-            return false
-        }
+        if (!ensureTables(db, logger, autoMigrate)) return false
 
         val hasUnique = hasUniqueStorageIndex(db, logger) ?: return false
 
@@ -62,6 +63,110 @@ object Migration {
         logger.warning("===== スキーマ移行が完了しました =====")
 
         return true
+    }
+
+    ////////////////////////////////
+    //      手順0: テーブルの作成
+    ////////////////////////////////
+
+    /**
+     * db.sql が定義するテーブルのうち、存在しないものだけを作る。
+     *
+     * 既にあるテーブルには一切触れないため、新規DBでも
+     * 一部だけ欠けたDB(storage_logだけ無い等)でも同じ処理で足りる。
+     * DDLは暗黙コミットを伴うので、途中で失敗しても次回起動時に残りから作られる。
+     */
+    private fun ensureTables(db: Database, logger: Logger, autoMigrate: Boolean): Boolean {
+
+        val existing = existingTables(db, logger) ?: return false
+
+        val missing = REQUIRED_TABLES.filterNot { it in existing }
+
+        if (missing.isEmpty()) return true
+
+        if (!autoMigrate) {
+            logger.severe("次のテーブルがありません: ${missing.joinToString(", ")}")
+            logger.severe("mysql.autoMigrate が false のため自動作成しません。")
+            logger.severe("jar内の db.sql を実行してテーブルを作成してください。")
+            return false
+        }
+
+        logger.warning("次のテーブルがないため db.sql から作成します: ${missing.joinToString(", ")}")
+
+        val statements = loadSchemaStatements(logger) ?: return false
+
+        for ((table, sql) in statements) {
+
+            //既存のテーブルに対する文は実行しない
+            if (table !in missing) continue
+
+            val result = db.update(sql)
+
+            if (result is DbResult.Failure) {
+                logger.severe("テーブルの作成に失敗しました ($table): ${result.message}")
+                logger.severe("DBユーザーにCREATE権限があるか確認してください。")
+                return false
+            }
+        }
+
+        val after = existingTables(db, logger) ?: return false
+        val stillMissing = REQUIRED_TABLES.filterNot { it in after }
+
+        if (stillMissing.isNotEmpty()) {
+            logger.severe("作成後もテーブルを確認できませんでした: ${stillMissing.joinToString(", ")}")
+            return false
+        }
+
+        logger.warning("テーブルを作成しました: ${missing.joinToString(", ")}")
+
+        return true
+    }
+
+    /**
+     * jar内の db.sql を「対象テーブル名 → SQL」に分解する。
+     *
+     * db.sql に解釈できない文が増えた場合は黙って飛ばさず失敗させる。
+     * (作成漏れに気づかないまま起動するほうが危険なため)
+     */
+    private fun loadSchemaStatements(logger: Logger): List<Pair<String, String>>? {
+
+        val text = runCatching {
+            Migration::class.java.getResourceAsStream(SCHEMA_RESOURCE)?.bufferedReader()?.use { it.readText() }
+        }.getOrNull()
+
+        if (text.isNullOrBlank()) {
+            logger.severe("jar内に $SCHEMA_RESOURCE が見つかりません。")
+            return null
+        }
+
+        val createTable = Regex("^create\\s+table\\s+`?(\\w+)`?", RegexOption.IGNORE_CASE)
+        val createIndex = Regex("^create\\s+(?:unique\\s+)?index\\s+`?\\w+`?\\s+on\\s+`?(\\w+)`?", RegexOption.IGNORE_CASE)
+
+        val statements = mutableListOf<Pair<String, String>>()
+
+        val body = text.lineSequence()
+            .filterNot { it.trimStart().startsWith("--") }
+            .joinToString("\n")
+
+        for (raw in body.split(";")) {
+
+            val sql = raw.trim()
+            if (sql.isEmpty()) continue
+
+            val normalized = sql.replace(Regex("\\s+"), " ")
+
+            val table = createTable.find(normalized)?.groupValues?.get(1)
+                ?: createIndex.find(normalized)?.groupValues?.get(1)
+
+            if (table == null) {
+                logger.severe("$SCHEMA_RESOURCE に解釈できない文があります: ${normalized.take(80)}")
+                return null
+            }
+
+            statements.add(table.lowercase() to sql)
+        }
+
+        return statements
     }
 
     ////////////////////////////////
@@ -199,12 +304,20 @@ object Migration {
     //      確認
     ////////////////////////////////
 
-    private fun tableExists(db: Database, logger: Logger, table: String): Boolean =
+    /**
+     * このDBに存在するテーブル名。nullは確認失敗。
+     *
+     * 「無い」と「確認できなかった」を区別する。混同すると、
+     * 一時的なDB障害を「テーブルが無い」と誤認して作成処理へ進んでしまう。
+     */
+    private fun existingTables(db: Database, logger: Logger): Set<String>? =
         db.query(
-            "SELECT COUNT(*) FROM information_schema.tables " +
-                    "WHERE table_schema = DATABASE() AND table_name = ?", table
-        ) { rs -> rs.next() && rs.getInt(1) > 0 }
-            .valueOrLog(logger, "テーブルの確認") ?: false
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()"
+        ) { rs ->
+            val names = mutableSetOf<String>()
+            while (rs.next()) names.add(rs.getString(1).lowercase())
+            names
+        }.valueOrLog(logger, "テーブル一覧の確認")
 
     /** (uuid, item_id) だけで構成されたUNIQUEインデックスがあるか。nullは確認失敗 */
     private fun hasUniqueStorageIndex(db: Database, logger: Logger): Boolean? =

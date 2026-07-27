@@ -101,13 +101,89 @@ class MigrationTest {
     ////////////////////////////////
 
     @Test
-    @DisplayName("item_storageが無ければ起動を止め、db.sqlの実行を促す")
-    fun stopsWhenTableMissing() {
+    @DisplayName("テーブルが無ければ db.sql から作成して起動できる")
+    fun createsTablesWhenMissing() {
 
         val f = fixture(schemaSql = null)
 
-        assertFalse(runMigration(f))
+        assertTrue(runMigration(f), f.context.logs.dump())
+
+        listOf("item_index", "item_storage", "storage_log", "system_log").forEach { table ->
+            assertEquals(
+                1,
+                MySqlSupport.queryOne(
+                    f.schema,
+                    "SELECT COUNT(*) FROM information_schema.tables " +
+                            "WHERE table_schema = DATABASE() AND table_name = '$table'"
+                ) { it.getInt(1) },
+                "$table が作成されていません"
+            )
+        }
+
+        //作成直後は移行済みの形になっている
+        assertTrue(hasUniqueIndex(f.schema))
+    }
+
+    @Test
+    @DisplayName("欠けているテーブルだけを作り、既存のテーブルとデータには触らない")
+    fun createsOnlyMissingTables() {
+
+        //storage_log と system_log だけ欠けた状態
+        val f = fixture(schemaSql = null)
+
+        MySqlSupport.applySql(
+            f.schema,
+            MySqlSupport.currentSchemaSql().substringBefore("create table storage_log")
+        )
+
+        MySqlSupport.insertStorage(f.schema, uuidA, 1, 777)
+
+        assertTrue(runMigration(f), f.context.logs.dump())
+
+        assertTrue(f.context.logs.anyContains("storage_log"), f.context.logs.dump())
+        assertEquals(777, amountOf(f.schema, uuidA, 1), "既存データが変化しました")
+        assertEquals(
+            1,
+            MySqlSupport.queryOne(
+                f.schema,
+                "SELECT COUNT(*) FROM information_schema.tables " +
+                        "WHERE table_schema = DATABASE() AND table_name = 'storage_log'"
+            ) { it.getInt(1) },
+            "storage_log が作成されていません"
+        )
+    }
+
+    @Test
+    @DisplayName("autoMigrateがfalseならテーブルを作らず、db.sqlの実行を促して中止する")
+    fun stopsWhenTableMissingAndAutoMigrateDisabled() {
+
+        val f = fixture(schemaSql = null, autoMigrate = false)
+
+        assertFalse(runMigration(f, autoMigrate = false))
         assertTrue(f.context.logs.anyContains("db.sql"), f.context.logs.dump())
+
+        assertEquals(
+            0,
+            MySqlSupport.queryOne(
+                f.schema,
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()"
+            ) { it.getInt(1) },
+            "autoMigrate=false なのにテーブルを作成しています"
+        )
+    }
+
+    @Test
+    @DisplayName("CREATE権限が無ければ起動を中止する")
+    fun stopsWithoutCreatePrivilege() {
+
+        val f = fixture(
+            schemaSql = null,
+            user = MySqlSupport.LIMITED_USER,
+            password = MySqlSupport.LIMITED_PASSWORD
+        )
+
+        assertFalse(runMigration(f))
+        assertTrue(f.context.logs.anyContains("CREATE権限"), f.context.logs.dump())
     }
 
     @Test

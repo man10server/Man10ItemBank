@@ -202,6 +202,18 @@ expect_sql "UNIQUE(uuid,item_id) が作られた" "1" \
 expect_sql "冗長な非UNIQUE索引は削除された" "0" \
     "SELECT COUNT(*) FROM (SELECT index_name FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='item_storage' AND non_unique=1 GROUP BY index_name HAVING COUNT(*)=2 AND SUM(column_name='uuid')=1 AND SUM(column_name='item_id')=1) t"
 
+# 移行前スキーマには storage_log / system_log が無い。db.sqlから自動作成されること
+if grep -q 'テーブルを作成しました' <<<"$LOGS"; then
+    ok "欠けていたテーブルを db.sql から作成した"
+else
+    ng "テーブル自動作成のログがありません"
+fi
+
+expect_sql "storage_log が作成された" "1" \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='storage_log'"
+expect_sql "system_log が作成された" "1" \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='system_log'"
+
 ########################################
 # 6. 検証用アイテムの登録 → 再起動
 ########################################
