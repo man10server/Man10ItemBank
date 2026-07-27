@@ -708,7 +708,10 @@ object ItemData {
         var bid: Double = 0.0
         var ask: Double = 0.0
         var tick: Double = 0.0
+
+        // 呼び出し側が受け取ったItemStackを編集してもItemIndexの原本が変わらないようにする
         var item: ItemStack? = null
+            get() = field?.clone()
     }
 
     enum class EnumResult {
